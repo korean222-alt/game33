@@ -1,0 +1,21 @@
+# =============================================================================
+#  render.yaml  -  게임(Socket.io) 서버 배포 설정
+#
+#  Render 대시보드 > New > Blueprint 에서 이 저장소를 연결하면 자동으로 읽힌다.
+#  배포 후 받은 주소(예: https://market-raid.onrender.com)를 Vercel 프로젝트의
+#  환경 변수 GAME_SERVER_URL 에 넣으면 정적 페이지와 연결된다.
+#
+#  주의: free 플랜은 15분간 접속이 없으면 슬립 상태가 되고, 이때 열려 있던
+#        WebSocket 연결이 끊긴다. 다시 깨어나는 데 약 1분 걸린다.
+# =============================================================================
+services:
+  - type: web
+    name: market-raid
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
