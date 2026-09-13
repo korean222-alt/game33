@@ -17,6 +17,7 @@ import { Entities } from './entities.js';
 import { LocalPlayer } from './player.js';
 import { Input, isTouchDevice } from './input.js';
 import { Hud } from './hud.js';
+import { VisualPipeline } from './visuals.js';
 
 const DEFUSE_RANGE = 1.6;   // 서버 상수와 동일해야 한다
 
@@ -85,6 +86,7 @@ export class Game {
 
     this.world = new World(this.renderer, this.assets).build(this.settings.quality);
     this.world.scene.add(this.camera);       // 뷰모델이 카메라에 붙어있으므로 씬에 넣어야 한다
+    this.pipeline = new VisualPipeline(this.renderer, this.world.scene, this.camera, this.settings.quality);
 
     this.entities = new Entities(this.world.scene, this.assets);
     this.player = new LocalPlayer(this.camera, this.world.scene, this.assets, this.settings);
@@ -94,7 +96,8 @@ export class Game {
       if (!locked && this.matchActive) this.hud.banner('클릭하면 다시 조작합니다', 2500);
     });
 
-    addEventListener('resize', () => this._onResize());
+    this._resizeHandler = () => this._onResize();
+    addEventListener('resize', this._resizeHandler);
     this._wireSocket();
 
     // 디버그용. 브라우저 콘솔에서 __mr.player.pos 등으로 상태를 볼 수 있다.
@@ -108,13 +111,15 @@ export class Game {
     this.camera.aspect = innerWidth / innerHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(innerWidth, innerHeight);
+    this.pipeline?.resize();
   }
 
   /* ======================================================================= *
    *  서버 이벤트
    * ======================================================================= */
   _wireSocket() {
-    const s = this.socket;
+    this._socketHandlers = [];
+    const s = { on: (event, fn) => { this._socketHandlers.push([event, fn]); this.socket.on(event, fn); } };
 
     s.on('matchStart', (d) => this._onMatchStart(d));
     s.on('snapshot', (d) => this._onSnapshot(d));
@@ -158,7 +163,8 @@ export class Game {
 
     s.on('botDown', (d) => {
       if (d.by === this.myId) this.hud.killfeed('적 제압');
-      this.entities.bots.get(d.id)?.push(performance.now(), { alive: 0 });
+      const bot = this.entities.bots.get(d.id);
+      if (bot) { bot.alive = false; bot.group.visible = false; }
     });
 
     s.on('siteProgress', (d) => {
@@ -182,6 +188,30 @@ export class Game {
     });
   }
 
+  dispose() {
+    this.matchActive = false;
+    this.stop();
+    this.input?.dispose();
+    removeEventListener('resize', this._resizeHandler);
+    for (const [event, fn] of this._socketHandlers || []) this.socket.off(event, fn);
+    this.entities?.clear();
+    this.pipeline?.composer.passes.forEach(p => p.dispose?.());
+    this.pipeline?.composer.dispose();
+    const disposed = new Set();
+    const release = resource => { if (resource && !disposed.has(resource)) { disposed.add(resource); resource.dispose?.(); } };
+    const releaseObject = root => root.traverse(o => {
+      release(o.geometry);
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+        if (!m) continue;
+        Object.values(m).filter(v => v?.isTexture).forEach(release); release(m);
+      }
+    });
+    if (this.world) { releaseObject(this.world.scene); this.world.scene.userData.environmentTarget?.dispose(); }
+    for (const entry of this.assets?.cache.values() || []) releaseObject(entry.scene);
+    this.renderer?.dispose();
+    this.canvas?.remove();
+  }
+
   _siteLabel(id) {
     return this.sites.find((s) => s.id === id)?.label || id;
   }
@@ -195,6 +225,11 @@ export class Game {
     this.siteProgress.clear();
     this.alive = true;
     this.hp = 100;
+    this.reloading = false;
+    this._defusingSite = null;
+    this._lastShotAt = 0;
+    this._netAccum = 0;
+    this._lowFpsTime = 0;
 
     this.entities.clear();
     this.entities.setMyId(this.myId);
@@ -290,7 +325,7 @@ export class Game {
     dt = Math.min(dt, 0.1);      // 탭 복귀 시 한 번에 크게 튀지 않도록
 
     this._step(dt, now);
-    this.renderer.render(this.world.scene, this.camera);
+    this.pipeline.render();
     this._trackFps(dt);
   };
 
@@ -360,6 +395,8 @@ export class Game {
   _tryReload() {
     const w = this.weapons?.[this.player.weapon];
     if (!w || this.reloading || this.ammo >= w.mag || this.reserve <= 0) return;
+    this.reloading = true;
+    this.hud.setAmmo(this.ammo, this.reserve, true, this.weaponName);
     this.socket.emit('reload');
   }
 
@@ -424,11 +461,19 @@ export class Game {
 
     const next = order[i + 1];
     this.settings.quality = next;
-    saveSettings(this.settings);
+    // Automatic changes apply only to this session; one slow load should not
+    // permanently lower the quality the user selected.
 
     const q = QUALITY[next];
     this.renderer.setPixelRatio(Math.min(q.pixelRatio, devicePixelRatio || 1));
     this.renderer.shadowMap.enabled = q.shadows;
+    this.pipeline.setQuality(next);
+    if (this.world.keyLight) {
+      this.world.keyLight.castShadow = q.shadows;
+      const shadow = this.world.keyLight.shadow;
+      shadow.mapSize.set(q.shadowMapSize, q.shadowMapSize);
+      shadow.map?.dispose(); shadow.map = null;
+    }
     this.camera.far = q.drawDistance;
     this.camera.updateProjectionMatrix();
     if (this.world.scene.fog) this.world.scene.fog.density = q.fogDensity;

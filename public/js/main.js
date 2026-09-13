@@ -6,6 +6,7 @@ import { connect, serverLabel } from './net.js';
 import { Hud, escapeHtml } from './hud.js';
 import { Game } from './game.js';
 import { isTouchDevice } from './input.js';
+import { loadSettings, saveSettings, guessQuality } from './config.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -24,7 +25,17 @@ const state = {
  * ========================================================================== */
 function initMenu() {
   const nameIn = $('nameIn');
-  nameIn.value = localStorage.getItem('mr-name') || '';
+  try { nameIn.value = localStorage.getItem('mr-name') || ''; } catch {}
+  const settings = loadSettings();
+  const quality = $('qualityIn');
+  quality.value = settings._qualityPicked ? settings.quality : guessQuality();
+  $('autoQuality').checked = settings.autoScale;
+  const update = () => {
+    saveSettings({ ...loadSettings(), quality: quality.value, autoScale: $('autoQuality').checked, _qualityPicked: true });
+    state.game?.dispose(); state.game = null;
+  };
+  quality.addEventListener('change', update);
+  $('autoQuality').addEventListener('change', update);
 
   // 무기 선택
   for (const b of $('wpSeg').children) {
@@ -51,7 +62,7 @@ function setMenuErr(msg) { $('menuErr').textContent = msg; }
 
 function playerName() {
   const v = $('nameIn').value.trim().slice(0, 12) || '대원';
-  localStorage.setItem('mr-name', v);
+  try { localStorage.setItem('mr-name', v); } catch {}
   return v;
 }
 
@@ -61,7 +72,7 @@ async function enterRoom(action, code) {
   $('btnCreate').disabled = $('btnJoin').disabled = true;
 
   try {
-    if (!state.socket) {
+    if (!state.socket?.connected) {
       setMenuErr('서버에 연결하는 중…');
       state.socket = await connect();
       wireLobbyEvents();
@@ -71,7 +82,7 @@ async function enterRoom(action, code) {
     const payload = { name: playerName(), weapon: state.weapon };
     if (code) payload.code = code;
 
-    const res = await new Promise((resolve) => state.socket.emit(action, payload, resolve));
+    const res = await new Promise((resolve, reject) => state.socket.timeout(12000).emit(action, payload, (err, response) => err ? reject(new Error('서버 응답이 지연되고 있습니다. 다시 시도해 주세요.')) : resolve(response)));
     if (!res?.ok) { setMenuErr(res?.error || '방에 들어가지 못했습니다.'); return; }
 
     state.myId = res.you;
@@ -84,6 +95,7 @@ async function enterRoom(action, code) {
   } catch (err) {
     setMenuErr(err.message || String(err));
     console.error(err);
+    state.hud.show('menu');
   } finally {
     $('btnCreate').disabled = $('btnJoin').disabled = false;
   }
@@ -97,16 +109,18 @@ async function ensureGame() {
   if (state.game) { state.game.myId = state.myId; return state.game; }
 
   state.hud.show('loading');
+  const game = new Game(state.socket, state.hud);
   try {
-    const game = new Game(state.socket, state.hud);
     game.myId = state.myId;
     await game.init((done, total, key) => {
       $('loadFill').style.width = `${Math.round((done / total) * 100)}%`;
       $('loadLabel').textContent = `${key} (${done}/${total})`;
     });
+    if (!state.socket?.connected) throw new Error('모델 로딩 중 서버 연결이 끊겼습니다. 다시 참가해 주세요.');
     state.game = game;
     return game;
   } catch (err) {
+    game.dispose();
     console.error(err);
     throw new Error(`게임을 준비하지 못했습니다: ${err.message}`);
   }
@@ -119,18 +133,23 @@ function wireLobbyEvents() {
   state.socket.on('lobby', (l) => applyLobby(l));
 
   state.socket.on('disconnect', () => {
-    if (!state.game?.matchActive) {
-      state.hud.show('menu');
-      setMenuErr('서버와 연결이 끊겼습니다. 다시 시도해 주세요.');
-      state.socket = null;
-      state.game = null;
-    }
+    state.game?.dispose();
+    state.game = null;
+    state.socket?.disconnect();
+    state.socket = null;
+    state.ready = false;
+    state.hud.showTouch(false);
+    state.hud.show('menu');
+    setMenuErr('서버와 연결이 끊겼습니다. 방을 다시 만들거나 참가해 주세요.');
   });
 }
 
 function applyLobby(l) {
   if (!l) return;
   state.lobby = l;
+  state.ready = !!l.players.find(p => p.id === state.myId)?.ready;
+  $('btnReady').textContent = state.ready ? '준비 완료' : '준비';
+  $('btnReady').classList.toggle('primary', state.ready);
   $('lobbyCode').textContent = l.code;
 
   const isHost = l.hostId === state.myId;

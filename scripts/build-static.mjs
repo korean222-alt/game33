@@ -15,6 +15,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { verifyModels } from './verify-models.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
@@ -29,6 +30,7 @@ const THREE_PARTS = ['build', path.join('examples', 'jsm')];
 const EXCLUDE = ['assets/low_poly_market_stalls'];
 
 async function main() {
+  await verifyModels();
   await fs.rm(DIST, { recursive: true, force: true });
 
   // 1) public -> dist (EXCLUDE 제외)

@@ -224,6 +224,12 @@
       <button data-w="sniper" aria-pressed="false">AWM</button>
     </div>
 
+    <label for="qualityIn">그래픽 품질</label>
+    <select id="qualityIn" style="width:100%;padding:10px;background:#13252c;color:#e6efee;border:1px solid #36525b;border-radius:8px">
+      <option value="ultra">최고 — 선명한 그림자 · 빛 번짐</option><option value="high">높음 — 균형 있는 화질</option>
+      <option value="medium">보통 — 가벼운 렌더링</option><option value="low">낮음 — 성능 우선</option>
+    </select>
+    <label><input id="autoQuality" type="checkbox" checked> 프레임이 낮으면 자동으로 품질 조절</label>
     <div class="divider"></div>
 
     <button class="primary" id="btnCreate">방 만들기</button>
@@ -231,6 +237,7 @@
     <input type="text" id="codeIn" class="code" maxlength="5" placeholder="ABCDE" autocomplete="off" autocapitalize="characters">
     <div class="row"><button id="btnJoin">참가하기</button></div>
     <div class="err" id="menuErr"></div>
+    <a href="/credits.html" target="_blank" rel="noopener" style="font-size:12px;color:#94bbb8">3D 모델 제작자 · 라이선스</a>
 
     <div class="hint">
       <b>PC</b> 이동 WASD · 달리기 Shift · 앉기 Ctrl · 점프 Space · 장전 R · 해체 F · 조준 우클릭 · 사격 좌클릭<br>

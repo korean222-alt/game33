@@ -51,13 +51,32 @@ export class AssetManager {
     let entry;
     try {
       const gltf = await this.loader.loadAsync(def.url);
-      const root = gltf.scene;
+      // Keep source transforms under a wrapper: placement and viewmodel rotation
+      // must never overwrite the authoring-tool axis conversion.
+      const model = gltf.scene;
+      const root = new THREE.Group();
+      root.add(model);
+      if (def.rotation) model.rotation.set(...def.rotation);
+      root.updateMatrixWorld(true);
+      const bounds = new THREE.Box3().setFromObject(root, true);
+      const size = bounds.getSize(new THREE.Vector3());
+      if (!Number.isFinite(size.length()) || size.length() <= 0) throw new Error('Empty model bounds');
+      const target = def.fit;
+      if (target) {
+        if (target.size) model.scale.multiply(new THREE.Vector3(...target.size).divide(size));
+        else model.scale.multiplyScalar(target.height ? target.height / size.y : target.length / size.x);
+        root.updateMatrixWorld(true);
+        bounds.setFromObject(root, true);
+        const center = bounds.getCenter(new THREE.Vector3());
+        model.position.sub(new THREE.Vector3(center.x, target.center ? center.y : bounds.min.y, center.z));
+      }
       root.scale.multiplyScalar(def.scale ?? 1);
       if (def.rotY) root.rotation.y = def.rotY;
       this._prepare(root);
       entry = { scene: root, animations: gltf.animations || [], isPlaceholder: false };
     } catch (err) {
       this.missing.push(key);
+      console.error(`[assets] ${key}: ${def.url}`, err);
       const root = makePlaceholder(def.placeholder || { type: 'box', w: 1, h: 1, d: 1, color: 0x888888 });
       root.scale.multiplyScalar(def.scale ?? 1);
       if (def.rotY) root.rotation.y = def.rotY;
@@ -98,10 +117,14 @@ export class AssetManager {
    * 인스턴스 하나 만들기.
    * 스킨(뼈대)이 있으면 SkeletonUtils.clone 으로 복제해야 각자 따로 움직인다.
    */
-  instance(key, { skinned = false } = {}) {
+  instance(key, { skinned = false, materials = false } = {}) {
     const entry = this.cache.get(key);
     if (!entry) throw new Error(`[assets] ${key} 가 아직 로드되지 않음`);
     const obj = skinned ? skeletonClone(entry.scene) : entry.scene.clone(true);
+    if (materials) obj.traverse(o => {
+      if (!o.isMesh) return;
+      o.material = Array.isArray(o.material) ? o.material.map(m => m.clone()) : o.material.clone();
+    });
     obj.userData.isPlaceholder = entry.isPlaceholder;
     return obj;
   }

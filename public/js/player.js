@@ -53,6 +53,10 @@ export class LocalPlayer {
     this.onGround = true;
     this.crouching = false;
     this.recoil.x = this.recoil.y = 0;
+    this.sprinting = this.moving = false;
+    this.adsAmount = this.bobPhase = this._sprintK = 0;
+    this._eye = PLAYER.eyeHeight;
+    this.muzzleUntil = 0;
     this.spread = COMBAT.spread.idle;
     this._sent.length = 0;
   }
@@ -71,13 +75,12 @@ export class LocalPlayer {
     this.viewmodel.traverse((o) => {
       if (!o.isMesh) return;
       o.castShadow = false;
-      o.renderOrder = 999;
-      const mats = Array.isArray(o.material) ? o.material : [o.material];
-      for (const m of mats) if (m) m.depthTest = false;
+      o.layers.set(1);
     });
     this._vmGroup.add(this.viewmodel);
 
     this.muzzle = new THREE.PointLight(0xffd08a, 0, 3.5, 2);
+    this.muzzle.layers.enable(1);
     this._vmGroup.add(this.muzzle);
   }
 
@@ -113,8 +116,8 @@ export class LocalPlayer {
     const wishX = fwdX * input.move.y + rgtX * input.move.x;
     const wishZ = fwdZ * input.move.y + rgtZ * input.move.x;
     const wishLen = Math.hypot(wishX, wishZ);
-    const targetX = wishLen > 0 ? (wishX / wishLen) * speed : 0;
-    const targetZ = wishLen > 0 ? (wishZ / wishLen) * speed : 0;
+    const targetX = wishX / Math.max(1, wishLen) * speed;
+    const targetZ = wishZ / Math.max(1, wishLen) * speed;
 
     // 가속 / 마찰 (관성)
     const rate = wishLen > 0 ? PLAYER.accel : PLAYER.friction;

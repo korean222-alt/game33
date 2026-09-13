@@ -40,12 +40,14 @@ export async function connect() {
     if (!window.io) throw new Error('socket.io 클라이언트를 초기화하지 못했습니다.');
   }
 
+  socket?.disconnect();
   socket = SERVER_URL ? window.io(SERVER_URL, IO_OPTS) : window.io(IO_OPTS);
 
   await new Promise((resolve, reject) => {
     const done = () => { cleanup(); resolve(); };
     const fail = (err) => {
       cleanup();
+      socket.disconnect();
       reject(new Error(
         `게임 서버에 연결하지 못했습니다.\n${SERVER_URL || '(같은 주소)'}\n${err?.message || ''}`,
       ));
