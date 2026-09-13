@@ -53,13 +53,19 @@ export const MODELS = {
  *  scale    : 크기
  *  adsPos   : 정조준(ADS) 했을 때 위치 - 보통 화면 중앙으로 당긴다
  * -------------------------------------------------------------------------- */
+/*  ※ 아래 값은 현재의 임시 총 모델(placeholder) 기준으로 맞춰져 있다.
+ *    진짜 GLB 를 public/assets/models/ 에 넣으면 크기가 달라지므로 다시 맞춰야 한다.
+ *
+ *    총은 로컬 +X 축을 향해 만들어져 있고 rot 의 Y=π/2 가 그걸 화면 앞(-Z)으로 돌린다.
+ *    그래서 pos 의 z 를 충분히 앞(-)으로 두지 않으면 개머리판이 카메라 뒤로 넘어가
+ *    화면을 가로지르는 이상한 막대처럼 보인다. 총이 길수록 z 를 더 앞으로 밀어야 한다. */
 export const VIEWMODEL = {
-  rifle:  { pos: [0.22, -0.20, -0.42], rot: [0, Math.PI / 2, 0], scale: 1.0,
-            adsPos: [0.0, -0.115, -0.30], adsRot: [0, Math.PI / 2, 0] },
-  smg:    { pos: [0.20, -0.18, -0.38], rot: [0, Math.PI / 2, 0], scale: 1.0,
-            adsPos: [0.0, -0.105, -0.28], adsRot: [0, Math.PI / 2, 0] },
-  sniper: { pos: [0.24, -0.20, -0.50], rot: [0, Math.PI / 2, 0], scale: 1.0,
-            adsPos: [0.0, -0.10,  -0.34], adsRot: [0, Math.PI / 2, 0] },
+  rifle:  { pos: [0.16, -0.14, -0.37], rot: [0, Math.PI / 2, 0], scale: 0.50,
+            adsPos: [0.0, -0.090, -0.34], adsRot: [0, Math.PI / 2, 0] },
+  smg:    { pos: [0.15, -0.13, -0.30], rot: [0, Math.PI / 2, 0], scale: 0.50,
+            adsPos: [0.0, -0.085, -0.28], adsRot: [0, Math.PI / 2, 0] },
+  sniper: { pos: [0.18, -0.15, -0.46], rot: [0, Math.PI / 2, 0], scale: 0.50,
+            adsPos: [0.0, -0.080, -0.44], adsRot: [0, Math.PI / 2, 0] },
 };
 /*  총이 뒤를 보고 있으면 rot 의 Y 값을 -Math.PI/2 로 바꾸고,
  *  총이 뒤집혀 있으면 rot 의 Z 값에 Math.PI 를 넣으면 된다.            */

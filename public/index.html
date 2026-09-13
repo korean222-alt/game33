@@ -1,0 +1,296 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0d0c0a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>MARKET RAID</title>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "/vendor/three/build/three.module.js",
+    "three/addons/": "/vendor/three/examples/jsm/"
+  }
+}
+</script>
+
+<style>
+  :root {
+    --bg:#0d0c0a; --panel:#16150f; --line:#2f2c22; --ink:#e8e2d2; --dim:#9b9585;
+    --accent:#d8a24a; --danger:#c8492f; --ok:#6f9b52;
+    --safe-t: env(safe-area-inset-top,0px);  --safe-b: env(safe-area-inset-bottom,0px);
+    --safe-l: env(safe-area-inset-left,0px); --safe-r: env(safe-area-inset-right,0px);
+  }
+  * { box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  html,body { margin:0; height:100%; overflow:hidden; background:var(--bg); color:var(--ink);
+    font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Pretendard","Noto Sans KR",sans-serif;
+    overscroll-behavior:none; touch-action:none; }
+  canvas { display:block; width:100%; height:100%; }
+  #app { position:fixed; inset:0; }
+  .hidden { display:none !important; }
+
+  /* ---------- 공통 화면 ---------- */
+  .screen { position:fixed; inset:0; z-index:20; display:flex; align-items:center; justify-content:center;
+    padding:calc(20px + var(--safe-t)) 20px calc(20px + var(--safe-b)); overflow-y:auto;
+    background:radial-gradient(120% 90% at 50% 0%, #1b1811 0%, #0b0a08 70%); }
+  .card { width:100%; max-width:440px; background:var(--panel); border:1px solid var(--line);
+    border-radius:14px; padding:22px; box-shadow:0 24px 60px rgba(0,0,0,.6); }
+  h1 { margin:0 0 4px; font-size:30px; letter-spacing:.14em; font-weight:800; }
+  h1 .b { color:var(--accent); }
+  .sub { margin:0 0 20px; color:var(--dim); font-size:13px; letter-spacing:.02em; }
+  h2 { margin:0 0 14px; font-size:17px; letter-spacing:.06em; }
+  label { display:block; font-size:12px; color:var(--dim); margin:14px 0 6px; letter-spacing:.05em; }
+  input[type=text] { width:100%; padding:12px 14px; font-size:16px; background:#0d0c08; color:var(--ink);
+    border:1px solid var(--line); border-radius:9px; outline:none; font-family:inherit; }
+  input[type=text]:focus { border-color:var(--accent); }
+  input.code { text-transform:uppercase; letter-spacing:.34em; text-align:center; font-size:22px; font-weight:700; }
+  button { font-family:inherit; font-size:15px; font-weight:600; padding:13px 16px; border-radius:9px;
+    border:1px solid var(--line); background:#211e16; color:var(--ink); cursor:pointer; width:100%; }
+  button:active { transform:translateY(1px); }
+  button:disabled { opacity:.42; cursor:default; }
+  button.primary { background:var(--accent); border-color:var(--accent); color:#191408; }
+  button.ghost { background:transparent; }
+  .row { display:flex; gap:9px; margin-top:11px; }
+  .row > * { flex:1; }
+  .seg { display:flex; gap:7px; }
+  .seg button { padding:11px 8px; font-size:13px; }
+  .seg button[aria-pressed=true] { background:var(--accent); border-color:var(--accent); color:#191408; }
+  .err { color:var(--danger); font-size:13px; min-height:18px; margin-top:10px; }
+  .divider { height:1px; background:var(--line); margin:20px 0; }
+
+  /* ---------- 로비 ---------- */
+  .codebox { text-align:center; background:#0d0c08; border:1px dashed var(--line); border-radius:11px; padding:14px; }
+  .codebox .lbl { font-size:11px; color:var(--dim); letter-spacing:.14em; }
+  .codebox .val { font-size:34px; font-weight:800; letter-spacing:.30em; color:var(--accent); margin-top:3px; }
+  .plist { list-style:none; padding:0; margin:14px 0 0; }
+  .plist li { display:flex; align-items:center; gap:10px; padding:11px 12px; background:#0d0c08;
+    border:1px solid var(--line); border-radius:9px; margin-bottom:7px; font-size:14px; }
+  .plist .dot { width:8px; height:8px; border-radius:50%; background:var(--dim); flex:none; }
+  .plist .dot.on { background:var(--ok); box-shadow:0 0 8px var(--ok); }
+  .plist .nm { flex:1; font-weight:600; }
+  .plist .tag { font-size:11px; color:var(--dim); letter-spacing:.05em; }
+
+  /* ---------- 로딩 ---------- */
+  #loading .bar { height:5px; background:#0d0c08; border-radius:3px; overflow:hidden; margin-top:16px; }
+  #loading .fill { height:100%; width:0%; background:var(--accent); transition:width .18s; }
+  #loadLabel { font-size:12px; color:var(--dim); margin-top:9px; }
+
+  /* ---------- HUD ---------- */
+  #hud { position:fixed; inset:0; z-index:10; pointer-events:none; user-select:none;
+    padding:calc(10px + var(--safe-t)) calc(12px + var(--safe-r)) calc(10px + var(--safe-b)) calc(12px + var(--safe-l)); }
+  #crosshair { position:absolute; left:50%; top:50%; width:26px; height:26px; margin:-13px 0 0 -13px; }
+  #crosshair i { position:absolute; background:rgba(255,255,255,.85); box-shadow:0 0 2px rgba(0,0,0,.9); display:block; }
+  #crosshair .h { width:7px; height:1.5px; top:12.25px; } #crosshair .h.l { left:0; } #crosshair .h.r { right:0; }
+  #crosshair .v { width:1.5px; height:7px; left:12.25px; } #crosshair .v.t { top:0; } #crosshair .v.b { bottom:0; }
+  #crosshair.hit i { background:var(--danger); }
+
+  .hudTop { display:flex; justify-content:space-between; align-items:flex-start; gap:12px; }
+  .timer { font-size:26px; font-weight:800; letter-spacing:.06em; text-shadow:0 2px 8px #000; font-variant-numeric:tabular-nums; }
+  .timer.low { color:var(--danger); }
+  .sites { display:flex; flex-direction:column; gap:6px; align-items:flex-end; }
+  .site { background:rgba(10,9,6,.72); border:1px solid var(--line); border-radius:7px; padding:6px 9px; min-width:132px; }
+  .site .t { display:flex; justify-content:space-between; font-size:11px; letter-spacing:.05em; }
+  .site .pb { height:3px; background:#000; border-radius:2px; margin-top:5px; overflow:hidden; }
+  .site .pf { height:100%; width:0%; background:var(--accent); }
+  .site.done { border-color:var(--ok); } .site.done .pf { background:var(--ok); }
+  .site.done .t { color:var(--ok); }
+
+  .hudBot { position:absolute; left:calc(14px + var(--safe-l)); right:calc(14px + var(--safe-r));
+    bottom:calc(12px + var(--safe-b)); display:flex; justify-content:space-between; align-items:flex-end; }
+  .hp { min-width:168px; }
+  .hp .n { font-size:12px; color:var(--dim); letter-spacing:.1em; }
+  .hp .bar { height:9px; background:#000; border:1px solid var(--line); border-radius:5px; overflow:hidden; margin-top:4px; }
+  .hp .fill { height:100%; width:100%; background:var(--ok); transition:width .16s; }
+  .hp .fill.mid { background:var(--accent); } .hp .fill.low { background:var(--danger); }
+  .ammo { text-align:right; font-variant-numeric:tabular-nums; text-shadow:0 2px 8px #000; }
+  .ammo .big { font-size:32px; font-weight:800; line-height:1; }
+  .ammo .sm { font-size:14px; color:var(--dim); }
+  .ammo.reloading .big { color:var(--accent); }
+  .ammo .wp { font-size:11px; color:var(--dim); letter-spacing:.1em; }
+
+  #banner { position:absolute; left:0; right:0; top:34%; text-align:center; font-size:19px; font-weight:700;
+    letter-spacing:.05em; text-shadow:0 2px 12px #000; opacity:0; transition:opacity .2s; }
+  #defuse { position:absolute; left:50%; top:58%; transform:translateX(-50%); text-align:center;
+    background:rgba(10,9,6,.8); border:1px solid var(--line); border-radius:9px; padding:9px 16px; min-width:184px; }
+  #defuse .t { font-size:12px; letter-spacing:.06em; }
+  #defuse .pb { height:5px; background:#000; border-radius:3px; margin-top:6px; overflow:hidden; }
+  #defuse .pf { height:100%; width:0%; background:var(--accent); }
+  #dmg { position:absolute; inset:0; background:radial-gradient(circle, transparent 42%, rgba(160,20,10,.62) 100%);
+    opacity:0; transition:opacity .28s; }
+  #dead { position:absolute; inset:0; background:rgba(5,4,3,.62); display:flex; align-items:center;
+    justify-content:center; font-size:22px; font-weight:800; letter-spacing:.14em; color:var(--danger); }
+  #killfeed { position:absolute; right:calc(12px + var(--safe-r)); top:calc(78px + var(--safe-t));
+    display:flex; flex-direction:column; gap:4px; align-items:flex-end; }
+  #killfeed div { background:rgba(10,9,6,.72); border:1px solid var(--line); border-radius:6px;
+    padding:4px 9px; font-size:12px; }
+  #fps { position:absolute; left:50%; top:calc(8px + var(--safe-t)); transform:translateX(-50%);
+    font-size:11px; color:var(--dim); font-variant-numeric:tabular-nums; }
+
+  /* ---------- 터치 컨트롤 ---------- */
+  #touch { position:fixed; inset:0; z-index:12; pointer-events:none; }
+  #touch.on .tc { pointer-events:auto; }
+  .tc { position:absolute; }
+  #stick { left:calc(24px + var(--safe-l)); bottom:calc(28px + var(--safe-b)); width:132px; height:132px;
+    border-radius:50%; background:rgba(20,18,12,.34); border:1px solid rgba(120,112,90,.34); }
+  #stick .knob { position:absolute; left:50%; top:50%; width:54px; height:54px; margin:-27px 0 0 -27px;
+    border-radius:50%; background:rgba(216,162,74,.5); border:1px solid rgba(232,226,210,.4); }
+  .btn { border-radius:50%; background:rgba(20,18,12,.42); border:1px solid rgba(120,112,90,.38);
+    display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700;
+    color:var(--ink); letter-spacing:.04em; text-align:center; line-height:1.15; }
+  .btn:active, .btn.on { background:rgba(216,162,74,.5); }
+  #bFire { right:calc(26px + var(--safe-r)); bottom:calc(34px + var(--safe-b)); width:92px; height:92px; font-size:14px; }
+  #bAds  { right:calc(132px + var(--safe-r)); bottom:calc(96px + var(--safe-b)); width:62px; height:62px; }
+  #bRel  { right:calc(30px + var(--safe-r)); bottom:calc(140px + var(--safe-b)); width:62px; height:62px; }
+  #bJump { right:calc(126px + var(--safe-r)); bottom:calc(26px + var(--safe-b)); width:60px; height:60px; }
+  #bCrch { left:calc(172px + var(--safe-l)); bottom:calc(34px + var(--safe-b)); width:60px; height:60px; }
+  #bSpr  { left:calc(172px + var(--safe-l)); bottom:calc(104px + var(--safe-b)); width:60px; height:60px; }
+  #bUse  { left:50%; transform:translateX(-50%); bottom:calc(30px + var(--safe-b)); width:76px; height:76px;
+    font-size:13px; border-color:rgba(216,162,74,.6); }
+
+  /* ---------- 결과 ---------- */
+  .result .big { font-size:32px; font-weight:800; letter-spacing:.1em; text-align:center; }
+  .result .big.won { color:var(--ok); } .result .big.lost { color:var(--danger); }
+  .result .why { text-align:center; color:var(--dim); font-size:13px; margin-top:5px; }
+  .stats { list-style:none; padding:0; margin:18px 0 0; }
+  .stats li { display:flex; justify-content:space-between; padding:9px 12px; background:#0d0c08;
+    border:1px solid var(--line); border-radius:8px; margin-bottom:6px; font-size:14px; }
+  .stats .k { color:var(--accent); font-weight:700; }
+
+  .hint { font-size:11.5px; color:var(--dim); line-height:1.7; margin-top:16px; }
+  .hint b { color:var(--ink); font-weight:600; }
+  @media (max-width:430px){ h1{font-size:25px;} .card{padding:18px;} }
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<!-- ===================== HUD ===================== -->
+<div id="hud" class="hidden">
+  <div id="crosshair"><i class="h l"></i><i class="h r"></i><i class="v t"></i><i class="v b"></i></div>
+  <div class="hudTop">
+    <div class="timer" id="timer">6:00</div>
+    <div class="sites" id="siteList"></div>
+  </div>
+  <div id="fps" class="hidden">0 fps</div>
+  <div id="killfeed"></div>
+  <div id="banner"></div>
+  <div id="defuse" class="hidden">
+    <div class="t" id="defuseTxt">해체 중…</div>
+    <div class="pb"><div class="pf" id="defuseFill"></div></div>
+  </div>
+  <div class="hudBot">
+    <div class="hp">
+      <div class="n" id="hpName">체력</div>
+      <div class="bar"><div class="fill" id="hpFill"></div></div>
+    </div>
+    <div class="ammo" id="ammoBox">
+      <div class="wp" id="wpName">M416</div>
+      <div><span class="big" id="ammoNow">30</span><span class="sm" id="ammoRes"> / 150</span></div>
+    </div>
+  </div>
+  <div id="dmg"></div>
+  <div id="dead" class="hidden">전사 — 팀원을 기다리는 중</div>
+</div>
+
+<!-- ===================== 터치 컨트롤 ===================== -->
+<div id="touch" class="hidden">
+  <div class="tc" id="stick"><div class="knob" id="knob"></div></div>
+  <div class="tc btn" id="bFire">사격</div>
+  <div class="tc btn" id="bAds">조준</div>
+  <div class="tc btn" id="bRel">장전</div>
+  <div class="tc btn" id="bJump">점프</div>
+  <div class="tc btn" id="bCrch">앉기</div>
+  <div class="tc btn" id="bSpr">달리기</div>
+  <div class="tc btn hidden" id="bUse">해체</div>
+</div>
+
+<!-- ===================== 메뉴 ===================== -->
+<div class="screen" id="menu">
+  <div class="card">
+    <h1>MARKET <span class="b">RAID</span></h1>
+    <p class="sub">2~4인 협동 FPS · 시장 실내 · 폭발물 해체</p>
+
+    <label for="nameIn">호출부호</label>
+    <input type="text" id="nameIn" maxlength="12" placeholder="대원" autocomplete="off">
+
+    <label>주무기</label>
+    <div class="seg" id="wpSeg">
+      <button data-w="rifle"  aria-pressed="true">M416</button>
+      <button data-w="smg"    aria-pressed="false">UMP9</button>
+      <button data-w="sniper" aria-pressed="false">AWM</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <button class="primary" id="btnCreate">방 만들기</button>
+    <label for="codeIn">방 코드로 참가</label>
+    <input type="text" id="codeIn" class="code" maxlength="5" placeholder="ABCDE" autocomplete="off" autocapitalize="characters">
+    <div class="row"><button id="btnJoin">참가하기</button></div>
+    <div class="err" id="menuErr"></div>
+
+    <div class="hint">
+      <b>PC</b> 이동 WASD · 달리기 Shift · 앉기 Ctrl · 점프 Space · 장전 R · 해체 F · 조준 우클릭 · 사격 좌클릭<br>
+      <b>모바일</b> 왼쪽 조이스틱 이동 · 오른쪽 화면 드래그로 시점 · 버튼으로 사격/조준/장전
+    </div>
+  </div>
+</div>
+
+<!-- ===================== 로비 ===================== -->
+<div class="screen hidden" id="lobby">
+  <div class="card">
+    <h2>작전 대기실</h2>
+    <div class="codebox">
+      <div class="lbl">방 코드</div>
+      <div class="val" id="lobbyCode">-----</div>
+    </div>
+    <ul class="plist" id="lobbyPlayers"></ul>
+
+    <div id="hostOnly">
+      <label>적 병력</label>
+      <div class="seg" id="botSeg">
+        <button data-n="2">2명</button><button data-n="3">3명</button>
+        <button data-n="4" aria-pressed="true">4명</button><button data-n="5">5명</button>
+      </div>
+      <label>난이도</label>
+      <div class="seg" id="diffSeg">
+        <button data-d="easy">쉬움</button>
+        <button data-d="normal" aria-pressed="true">보통</button>
+        <button data-d="hard">어려움</button>
+      </div>
+    </div>
+
+    <div class="row">
+      <button id="btnReady">준비</button>
+      <button class="primary" id="btnStart">작전 개시</button>
+    </div>
+    <div class="row"><button class="ghost" id="btnLeave">나가기</button></div>
+    <div class="err" id="lobbyErr"></div>
+  </div>
+</div>
+
+<!-- ===================== 로딩 ===================== -->
+<div class="screen hidden" id="loading">
+  <div class="card">
+    <h2>장비 점검 중</h2>
+    <div class="bar"><div class="fill" id="loadFill"></div></div>
+    <div id="loadLabel">준비 중…</div>
+  </div>
+</div>
+
+<!-- ===================== 결과 ===================== -->
+<div class="screen hidden" id="result">
+  <div class="card result">
+    <div class="big" id="resTitle">작전 성공</div>
+    <div class="why" id="resWhy"></div>
+    <ul class="stats" id="resStats"></ul>
+    <div class="row"><button class="primary" id="btnAgain">대기실로</button></div>
+  </div>
+</div>
+
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>

@@ -103,7 +103,14 @@ Socket.io 클라이언트 라이브러리는 게임 서버가 `/socket.io/socket
 
 ## 현재 상태
 
-게임 서버(`server.js`)와 공유 데이터 모듈(`config.js`, `assets.js`, `map-data.js`),
-3D 에셋은 준비돼 있다. **클라이언트 진입점(`public/index.html` 과 렌더링/입력/네트워크를
-묶는 메인 스크립트)은 아직 없다.** 위 배포 설정은 그 클라이언트가 추가되면 바로
-동작하도록 미리 깔아둔 것이다.
+서버와 클라이언트 모두 동작한다. 방 만들기 → 참가 → 작전 개시 → 이동/사격/장전 →
+폭발물 해체 → 결과까지 2인 접속으로 확인했다.
+
+남은 것은 **3D 모델**이다. `public/assets/models/` 에 있는 건 `stall-wood.glb` 하나뿐이라
+나머지 9개(`stall-tarp`, `crate`, `barrel`, `vase`, `well`, `character`,
+`weapon-rifle`, `weapon-smg`, `weapon-sniper`)는 `config.js` 의 placeholder 도형으로
+대체돼 그려진다. 게임은 정상 동작하지만 상자·통·사람·총이 단순 도형으로 보인다.
+파일을 넣으면 코드 수정 없이 자동으로 바뀐다.
+
+GLB 를 넣은 뒤에는 `config.js` 의 `VIEWMODEL` 값을 다시 맞춰야 한다. 지금 값은
+임시 총 모델 크기에 맞춰 둔 것이다.
