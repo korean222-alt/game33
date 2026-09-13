@@ -1,0 +1,6 @@
+# Source-only models; packed runtime GLBs live in public/assets/models/.
+public/assets/low_poly_market_stalls/
+
+# Review and test files are not needed in Vercel's static deployment.
+tests/
+GRAPHICS-REVIEW.md
