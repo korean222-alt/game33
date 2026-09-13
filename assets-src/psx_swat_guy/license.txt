@@ -1,0 +1,11 @@
+Model Information:
+* title:	psx swat guy rigged
+* source:	https://sketchfab.com/3d-models/psx-swat-guy-rigged-4fd683169d3b4f9fbc2d993e37a2165c
+* author:	teodor.ibrahimov (https://sketchfab.com/teodor.ibrahimov)
+
+Model License:
+* license type:	CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)
+* requirements:	Author must be credited. Commercial use is allowed.
+
+If you use this 3D model in your project be sure to copy paste this credit wherever you share it:
+This work is based on "psx swat guy rigged" (https://sketchfab.com/3d-models/psx-swat-guy-rigged-4fd683169d3b4f9fbc2d993e37a2165c) by teodor.ibrahimov (https://sketchfab.com/teodor.ibrahimov) licensed under CC-BY-4.0 (http://creativecommons.org/licenses/by/4.0/)

@@ -15,31 +15,39 @@
  *  placeholder: 파일이 없을 때 대신 그릴 기본 도형
  * -------------------------------------------------------------------------- */
 export const MODELS = {
-  // --- 맵 소품 ---
-  stallTarp:  { url: '/assets/models/stall-tarp.glb',  scale: 1, rotY: 0,
-                placeholder: { type: 'stall', w: 2.83, h: 1.84, d: 2.23, color: 0x6b5c45 } },
-  stallWood:  { url: '/assets/models/stall-wood.glb',  scale: 1, rotY: 0,
-                placeholder: { type: 'stall', w: 5.13, h: 2.73, d: 2.86, color: 0x7a6647 } },
-  crate:      { url: '/assets/models/crate.glb',       scale: 1, rotY: 0,
+  // --- 맵 소품 (크기는 tools/build-assets.mjs 가 실제로 찍어준 값) ---
+  stallTarp:  { url: '/assets/models/stall-tarp.glb', scale: 1, rotY: 0,
+                placeholder: { type: 'stall', w: 2.83, h: 1.51, d: 1.58, color: 0x9a3a33 } },
+  stallWood:  { url: '/assets/models/stall-wood.glb', scale: 1, rotY: 0,
+                placeholder: { type: 'stall', w: 3.09, h: 2.62, d: 3.06, color: 0x7a6647 } },
+  crate:      { url: '/assets/models/crate.glb',      scale: 1, rotY: 0,
                 placeholder: { type: 'box', w: 0.75, h: 0.75, d: 0.75, color: 0x8a6b3f } },
-  barrel:     { url: '/assets/models/barrel.glb',      scale: 1, rotY: 0,
-                placeholder: { type: 'cylinder', r: 0.44, h: 0.99, color: 0x5a4630 } },
-  vase:       { url: '/assets/models/vase.glb',        scale: 1, rotY: 0,
-                placeholder: { type: 'cylinder', r: 0.5, h: 1.53, color: 0x6d5a48 } },
-  well:       { url: '/assets/models/well.glb',        scale: 1, rotY: 0,
-                placeholder: { type: 'cylinder', r: 1.05, h: 2.35, color: 0x555049 } },
+  barrel:     { url: '/assets/models/barrel.glb',     scale: 1, rotY: 0,
+                placeholder: { type: 'cylinder', r: 0.43, h: 0.99, color: 0x5a4630 } },
+  vase:       { url: '/assets/models/vase.glb',       scale: 1, rotY: 0,
+                placeholder: { type: 'cylinder', r: 0.51, h: 1.53, color: 0x6d5a48 } },
+  well:       { url: '/assets/models/well.glb',       scale: 1, rotY: 0,
+                placeholder: { type: 'cylinder', r: 1.07, h: 2.35, color: 0x555049 } },
+  table:      { url: '/assets/models/table.glb',      scale: 1, rotY: 0,
+                placeholder: { type: 'box', w: 1.60, h: 1.18, d: 3.20, color: 0x6b5c45 } },
+  rack:       { url: '/assets/models/rack.glb',       scale: 1, rotY: 0,
+                placeholder: { type: 'box', w: 0.39, h: 1.90, d: 1.78, color: 0x5f5241 } },
 
   // --- 캐릭터 (팀원 + 적 봇이 같은 모델을 쓰고 색만 바꾼다) ---
-  character:  { url: '/assets/models/character.glb',   scale: 1, rotY: 0,
+  //  원본은 +Z(카메라 쪽)를 보고 서 있다. 게임은 yaw=0 일 때 -Z 를 보므로 180도 돌린다.
+  character:  { url: '/assets/models/character.glb',  scale: 1, rotY: Math.PI,
                 placeholder: { type: 'humanoid', h: 1.8, color: 0x7f8a74 } },
 
-  // --- 총기 (1인칭 뷰모델 + 다른 플레이어 손에 들리는 모델) ---
-  rifle:      { url: '/assets/models/weapon-rifle.glb',  scale: 1, rotY: 0,
-                placeholder: { type: 'gun', len: 0.9, color: 0x2b2b2e } },
-  smg:        { url: '/assets/models/weapon-smg.glb',    scale: 1, rotY: 0,
+  // --- 총기 ---
+  //  원본 3정 모두 "총구가 -X, 위가 +Y" 로 누워 있다.
+  //  rotY 를 -90도 주면 총구가 -Z(=카메라가 보는 앞쪽)를 향한다.
+  //  ※ 총이 뒤를 본다면 이 값을 +Math.PI / 2 로 바꾸면 된다.
+  rifle:      { url: '/assets/models/weapon-rifle.glb',  scale: 1, rotY: -Math.PI / 2,
+                placeholder: { type: 'gun', len: 0.90, color: 0x2b2b2e } },
+  smg:        { url: '/assets/models/weapon-smg.glb',    scale: 1, rotY: -Math.PI / 2,
                 placeholder: { type: 'gun', len: 0.65, color: 0x2b2b2e } },
-  sniper:     { url: '/assets/models/weapon-sniper.glb', scale: 1, rotY: 0,
-                placeholder: { type: 'gun', len: 1.2, color: 0x2b2b2e } },
+  sniper:     { url: '/assets/models/weapon-sniper.glb', scale: 1, rotY: -Math.PI / 2,
+                placeholder: { type: 'gun', len: 1.20, color: 0x2b2b2e } },
 };
 
 /* -----------------------------------------------------------------------------
@@ -51,18 +59,24 @@ export const MODELS = {
  *  pos      : 카메라 기준 위치 [오른쪽, 위, 앞(-가 앞)]
  *  rot      : 회전 [X, Y, Z] (라디안)
  *  scale    : 크기
- *  adsPos   : 정조준(ADS) 했을 때 위치 - 보통 화면 중앙으로 당긴다
+ *  adsPos   : 정조준(ADS) 했을 때 위치 - 가늠자가 화면 한가운데 오게 당긴다
+ *
+ *  ★ pos 의 Z 를 정하는 법 (제일 많이 틀리는 부분)
+ *    GLB 는 총의 "한가운데" 가 원점이다. 그래서 z 를 -0.3 같은 값으로 두면
+ *    개머리판이 카메라 뒤로 넘어가고, 총 내부가 화면을 가득 채워버린다.
+ *    z = -(총길이/2 + 0.1)  정도가 적당하다.
+ *      M416 0.90m -> -0.55  |  UMP9 0.65m -> -0.43  |  AWM 1.20m -> -0.70
  * -------------------------------------------------------------------------- */
 export const VIEWMODEL = {
-  rifle:  { pos: [0.22, -0.20, -0.42], rot: [0, Math.PI / 2, 0], scale: 1.0,
-            adsPos: [0.0, -0.115, -0.30], adsRot: [0, Math.PI / 2, 0] },
-  smg:    { pos: [0.20, -0.18, -0.38], rot: [0, Math.PI / 2, 0], scale: 1.0,
-            adsPos: [0.0, -0.105, -0.28], adsRot: [0, Math.PI / 2, 0] },
-  sniper: { pos: [0.24, -0.20, -0.50], rot: [0, Math.PI / 2, 0], scale: 1.0,
-            adsPos: [0.0, -0.10,  -0.34], adsRot: [0, Math.PI / 2, 0] },
+  rifle:  { pos: [0.195, -0.170, -0.575], rot: [0.015, 0, 0], scale: 1.0,
+            adsPos: [0.0, -0.104, -0.540], adsRot: [0, 0, 0] },
+  smg:    { pos: [0.180, -0.160, -0.450], rot: [0.015, 0, 0], scale: 1.0,
+            adsPos: [0.0, -0.140, -0.420], adsRot: [0, 0, 0] },
+  sniper: { pos: [0.200, -0.175, -0.730], rot: [0.015, 0, 0], scale: 1.0,
+            adsPos: [0.0, -0.128, -0.700], adsRot: [0, 0, 0] },
 };
-/*  총이 뒤를 보고 있으면 rot 의 Y 값을 -Math.PI/2 로 바꾸고,
- *  총이 뒤집혀 있으면 rot 의 Z 값에 Math.PI 를 넣으면 된다.            */
+/*  총구가 뒤(카메라 쪽)를 본다면 VIEWMODEL 이 아니라
+ *  MODELS 의 rotY 를 +Math.PI/2 로 바꿔야 한다.                        */
 
 /* -----------------------------------------------------------------------------
  *  3. 그래픽 품질 프리셋
@@ -130,6 +144,7 @@ export const SETTINGS_DEFAULT = {
   invertY: false,
   showFps: false,
   leftHanded: false,      // 조이스틱/발사 버튼 좌우 반전
+  volume: 0.7,            // 효과음 크기
 };
 
 /* -----------------------------------------------------------------------------

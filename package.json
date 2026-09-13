@@ -1,12 +1,15 @@
 {
   "name": "market-raid",
   "version": "1.0.0",
-  "description": "웹 기반 2~4인 협동 FPS - 시장 실내 맵 / 폭발물 해체 미션",
+  "description": "웹 기반 2~4인 협동 전술 FPS - 시장 실내 맵 / 폭발물 해체 미션 (Three.js + Socket.io)",
   "type": "module",
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "node --watch server.js"
+    "dev": "node --watch server.js",
+    "build:assets": "node tools/build-assets.mjs",
+    "check:map": "node tools/dev/check-map.mjs",
+    "preview:assets": "node tools/dev/render-preview.mjs"
   },
   "dependencies": {
     "express": "^4.19.2",
@@ -15,5 +18,12 @@
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "@gltf-transform/core": "^4.5.0",
+    "@gltf-transform/extensions": "^4.5.0",
+    "@gltf-transform/functions": "^4.5.0",
+    "playwright": "^1.63.0",
+    "sharp": "^0.35.4"
   }
 }

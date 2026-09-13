@@ -1,0 +1,103 @@
+<!doctype html>
+<!-- =============================================================================
+     tools/dev/preview.html  -  구운 GLB 를 눈으로 확인하는 개발용 페이지
+
+     사용법:  npm run preview:assets   (headless 로 PNG 를 뽑는다)
+     또는     서버 켜고 /tools/dev/preview.html?model=weapon-rifle 로 직접 열기
+
+     왼쪽부터: +Z에서 본 모습 / +X에서 본 모습 / 위에서 본 모습 / 비스듬히
+     빨강=+X  초록=+Y  파랑=+Z  (한 칸 = 0.25m)
+     ========================================================================== -->
+<meta charset="utf-8">
+<title>GLB preview</title>
+<style>
+  body { margin: 0; background: #15171c; color: #cfd6e4;
+         font: 12px ui-monospace, Menlo, monospace; }
+  #grid { display: grid; grid-template-columns: repeat(4, 320px); gap: 2px; }
+  .cell { position: relative; }
+  .cell span { position: absolute; left: 6px; top: 4px; color: #7fe3a0;
+               text-shadow: 0 0 4px #000; pointer-events: none; }
+  #info { padding: 6px 10px; color: #ffd479; }
+</style>
+<div id="info">loading…</div>
+<div id="grid"></div>
+
+<script type="importmap">
+{ "imports": {
+    "three": "/node_modules/three/build/three.module.js",
+    "three/addons/": "/node_modules/three/examples/jsm/"
+} }
+</script>
+
+<script type="module">
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+const params = new URLSearchParams(location.search);
+const modelName = params.get('model') || 'crate';
+const SIZE = 320;
+
+const loader = new GLTFLoader();
+const gltf = await loader.loadAsync(`/public/assets/models/${modelName}.glb`);
+const model = gltf.scene;
+
+// 경계 상자
+const box = new THREE.Box3().setFromObject(model);
+const size = box.getSize(new THREE.Vector3());
+const center = box.getCenter(new THREE.Vector3());
+const radius = Math.max(size.x, size.y, size.z) * 0.85 + 0.15;
+
+document.getElementById('info').textContent =
+  `${modelName}  |  크기 ${size.x.toFixed(3)} x ${size.y.toFixed(3)} x ${size.z.toFixed(3)} m  |  ` +
+  `바닥 y=${box.min.y.toFixed(3)}  중심 (${center.x.toFixed(3)}, ${center.y.toFixed(3)}, ${center.z.toFixed(3)})`;
+
+/* --- 공용 씬 --- */
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x15171c);
+scene.add(new THREE.HemisphereLight(0xbfd4ff, 0x39322a, 2.0));
+const key = new THREE.DirectionalLight(0xfff0dd, 2.6);
+key.position.set(3, 6, 4);
+scene.add(key);
+const rim = new THREE.DirectionalLight(0x88aaff, 1.1);
+rim.position.set(-4, 2, -3);
+scene.add(rim);
+scene.add(model);
+
+// 축 + 격자 (0.25m 간격)
+scene.add(new THREE.AxesHelper(Math.max(0.5, radius * 0.8)));
+const grid = new THREE.GridHelper(4, 16, 0x445066, 0x2a3140);
+grid.position.y = box.min.y;
+scene.add(grid);
+
+/* --- 4개 시점 --- */
+const views = [
+  { label: '+Z 정면 (X→오른쪽)', dir: [0, 0, 1] },
+  { label: '+X 측면 (Z→왼쪽)',   dir: [1, 0, 0] },
+  { label: '위에서 (X→오른쪽)',   dir: [0, 1, 0.001] },
+  { label: '비스듬히',            dir: [1, 0.7, 1] },
+];
+
+const gridEl = document.getElementById('grid');
+for (const v of views) {
+  const cell = document.createElement('div');
+  cell.className = 'cell';
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setSize(SIZE, SIZE);
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  cell.appendChild(renderer.domElement);
+  const tag = document.createElement('span');
+  tag.textContent = v.label;
+  cell.appendChild(tag);
+  gridEl.appendChild(cell);
+
+  const cam = new THREE.OrthographicCamera(-radius, radius, radius, -radius, 0.01, 100);
+  const d = new THREE.Vector3(...v.dir).normalize().multiplyScalar(radius * 4);
+  cam.position.copy(center).add(d);
+  cam.up.set(0, 1, 0);
+  if (Math.abs(v.dir[1]) > 0.9) cam.up.set(0, 0, -1);
+  cam.lookAt(center);
+  renderer.render(scene, cam);
+}
+
+window.__ready = true;
+</script>

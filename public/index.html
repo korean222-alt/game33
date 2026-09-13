@@ -1,0 +1,790 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>MARKET RAID - 협동 전술 FPS</title>
+
+<!-- 모바일: 확대/축소 금지 + 노치 영역까지 꽉 채우기 -->
+<meta name="viewport"
+      content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#0b0c0e">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🎯</text></svg>">
+
+<style>
+/* ==========================================================================
+ *  기본
+ * ======================================================================= */
+:root {
+  --bg:        #0b0c0e;
+  --panel:     rgba(16, 18, 22, 0.92);
+  --line:      rgba(255, 255, 255, 0.10);
+  --ink:       #e6e9ef;
+  --dim:       #8b93a3;
+  --accent:    #ff9d3c;   /* 시장 백열등 주황 */
+  --accent-2:  #4fd1a1;   /* 아군 / 성공 */
+  --danger:    #e5484d;
+  --safe-t: env(safe-area-inset-top, 0px);
+  --safe-b: env(safe-area-inset-bottom, 0px);
+  --safe-l: env(safe-area-inset-left, 0px);
+  --safe-r: env(safe-area-inset-right, 0px);
+}
+
+* { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+html, body {
+  margin: 0; padding: 0;
+  width: 100%; height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: -apple-system, BlinkMacSystemFont, 'Pretendard', 'Apple SD Gothic Neo',
+               'Noto Sans KR', 'Malgun Gothic', system-ui, sans-serif;
+  font-size: 15px;
+  overscroll-behavior: none;
+  touch-action: none;
+  user-select: none; -webkit-user-select: none;
+}
+
+canvas { display: block; position: fixed; inset: 0; width: 100%; height: 100%; }
+
+/* 숨김 */
+[hidden] { display: none !important; }
+
+/* ==========================================================================
+ *  세로 모드 경고 (가로 고정)
+ * ======================================================================= */
+#rotate {
+  position: fixed; inset: 0; z-index: 999;
+  display: none;
+  flex-direction: column; align-items: center; justify-content: center; gap: 18px;
+  background: var(--bg); text-align: center; padding: 24px;
+}
+#rotate .phone {
+  width: 62px; height: 104px; border: 3px solid var(--accent); border-radius: 12px;
+  animation: turn 1.8s ease-in-out infinite;
+}
+@keyframes turn {
+  0%, 40%   { transform: rotate(0deg); }
+  60%, 100% { transform: rotate(-90deg); }
+}
+/* 세로이면서 터치 기기일 때만 */
+@media (orientation: portrait) and (pointer: coarse) {
+  #rotate { display: flex; }
+}
+
+/* ==========================================================================
+ *  공통 UI 부품
+ * ======================================================================= */
+.screen {
+  position: fixed; inset: 0; z-index: 50;
+  display: flex; align-items: center; justify-content: center;
+  padding: calc(14px + var(--safe-t)) calc(14px + var(--safe-r))
+           calc(14px + var(--safe-b)) calc(14px + var(--safe-l));
+  background:
+    radial-gradient(1200px 600px at 50% 0%, rgba(255,157,60,0.10), transparent 60%),
+    linear-gradient(180deg, #0d0f13 0%, #08090b 100%);
+  overflow-y: auto;
+}
+
+.card {
+  width: min(760px, 100%);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 20px;
+  box-shadow: 0 24px 70px rgba(0,0,0,0.6);
+  backdrop-filter: blur(8px);
+}
+
+h1 {
+  margin: 0 0 2px; font-size: 26px; letter-spacing: 4px; font-weight: 800;
+}
+h1 .accent { color: var(--accent); }
+.sub { margin: 0 0 18px; color: var(--dim); font-size: 13px; letter-spacing: 0.5px; }
+
+label { display: block; font-size: 12px; color: var(--dim); margin: 0 0 5px; letter-spacing: 0.4px; }
+
+input[type=text] {
+  width: 100%; padding: 11px 13px;
+  background: rgba(0,0,0,0.45); color: var(--ink);
+  border: 1px solid var(--line); border-radius: 9px;
+  font-size: 16px;  /* 16px 미만이면 iOS 사파리가 자동 확대한다 */
+  font-family: inherit; outline: none;
+}
+input[type=text]:focus { border-color: var(--accent); }
+#joinCode { text-transform: uppercase; letter-spacing: 6px; font-weight: 700; text-align: center; }
+
+button {
+  font-family: inherit; font-size: 14px; font-weight: 700;
+  color: var(--ink); background: rgba(255,255,255,0.07);
+  border: 1px solid var(--line); border-radius: 9px;
+  padding: 11px 16px; cursor: pointer;
+  transition: background 0.12s, border-color 0.12s, transform 0.06s;
+}
+button:hover:not(:disabled) { background: rgba(255,255,255,0.13); }
+button:active:not(:disabled) { transform: scale(0.97); }
+button:disabled { opacity: 0.4; cursor: default; }
+button.primary {
+  background: linear-gradient(180deg, #ffa84f, #f0851f);
+  border-color: #ffb96b; color: #241203;
+}
+button.primary:hover:not(:disabled) { background: linear-gradient(180deg, #ffb96b, #ff9633); }
+button.ghost { background: transparent; }
+
+.row { display: flex; gap: 10px; flex-wrap: wrap; }
+.row > * { flex: 1; min-width: 0; }
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+@media (max-width: 620px) { .grid2 { grid-template-columns: 1fr; } }
+
+.divider { height: 1px; background: var(--line); margin: 16px 0; }
+
+.chip-group { display: flex; gap: 7px; flex-wrap: wrap; }
+.chip {
+  padding: 8px 13px; border-radius: 999px; font-size: 12.5px; font-weight: 700;
+  border: 1px solid var(--line); background: rgba(255,255,255,0.05);
+  color: var(--dim); cursor: pointer; transition: all 0.12s;
+}
+.chip[aria-pressed="true"] {
+  background: rgba(255,157,60,0.18); border-color: var(--accent); color: var(--accent);
+}
+
+.hint { font-size: 11.5px; color: var(--dim); line-height: 1.6; }
+.err { color: var(--danger); font-size: 12.5px; min-height: 17px; margin-top: 8px; }
+
+/* ==========================================================================
+ *  1. 로딩
+ * ======================================================================= */
+#boot .bar {
+  height: 5px; background: rgba(255,255,255,0.08); border-radius: 3px; overflow: hidden; margin-top: 14px;
+}
+#boot .bar > i { display: block; height: 100%; width: 0%; background: var(--accent); transition: width 0.2s; }
+#bootMsg { font-size: 12px; color: var(--dim); margin-top: 9px; font-variant-numeric: tabular-nums; }
+
+/* ==========================================================================
+ *  2. 로비
+ * ======================================================================= */
+#roomCode {
+  font-size: 34px; font-weight: 800; letter-spacing: 10px; color: var(--accent);
+  text-align: center; padding: 10px 0 4px;
+}
+#playerList { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+#playerList li {
+  display: flex; align-items: center; gap: 9px;
+  padding: 9px 11px; border-radius: 9px;
+  background: rgba(255,255,255,0.045); border: 1px solid var(--line); font-size: 13.5px;
+}
+#playerList .dot { width: 8px; height: 8px; border-radius: 50%; background: var(--dim); flex: none; }
+#playerList .dot.ready { background: var(--accent-2); box-shadow: 0 0 8px var(--accent-2); }
+#playerList .tag {
+  margin-left: auto; font-size: 10.5px; color: var(--dim);
+  border: 1px solid var(--line); padding: 2px 7px; border-radius: 5px;
+}
+
+/* ==========================================================================
+ *  3. 인게임 HUD
+ * ======================================================================= */
+#hud {
+  position: fixed; inset: 0; z-index: 20;
+  pointer-events: none;  /* 기본은 통과. 버튼만 개별로 되살린다 */
+  padding: calc(10px + var(--safe-t)) calc(10px + var(--safe-r))
+           calc(10px + var(--safe-b)) calc(10px + var(--safe-l));
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- 조준점 --- */
+#crosshair {
+  position: absolute; left: 50%; top: 50%; width: 44px; height: 44px;
+  transform: translate(-50%, -50%); opacity: 0.95;
+}
+#crosshair i {
+  position: absolute; background: rgba(255,255,255,0.88); border-radius: 1px;
+  box-shadow: 0 0 2px rgba(0,0,0,0.9);
+}
+#crosshair .cv { width: 2px; height: 8px; left: 21px; }
+#crosshair .ch { height: 2px; width: 8px; top: 21px; }
+#crosshair .t { top: 0; }    #crosshair .b { bottom: 0; }
+#crosshair .l { left: 0; }   #crosshair .r { right: 0; }
+#crosshair .dot {
+  width: 2px; height: 2px; left: 21px; top: 21px; border-radius: 50%; background: var(--accent);
+}
+#crosshair.hidden { opacity: 0; }
+
+/* 명중 마커 */
+#hitmark {
+  position: absolute; left: 50%; top: 50%; width: 26px; height: 26px;
+  transform: translate(-50%, -50%) rotate(45deg); opacity: 0;
+}
+#hitmark i { position: absolute; background: #fff; box-shadow: 0 0 3px #000; }
+#hitmark .a { width: 2px; height: 9px; left: 12px; top: 0; }
+#hitmark .b { width: 2px; height: 9px; left: 12px; bottom: 0; }
+#hitmark .c { height: 2px; width: 9px; top: 12px; left: 0; }
+#hitmark .d { height: 2px; width: 9px; top: 12px; right: 0; }
+#hitmark.show { animation: hm 0.26s ease-out; }
+#hitmark.kill i { background: var(--danger); }
+@keyframes hm {
+  0%   { opacity: 1; transform: translate(-50%,-50%) rotate(45deg) scale(0.6); }
+  100% { opacity: 0; transform: translate(-50%,-50%) rotate(45deg) scale(1.35); }
+}
+
+/* --- 피격 비네트 --- */
+#vignette {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 42%, rgba(190,20,20,0.85) 100%);
+  transition: opacity 0.22s;
+}
+/* 피 흘리는 상태(체력 낮음) */
+#lowhp {
+  position: absolute; inset: 0; pointer-events: none; opacity: 0;
+  background: radial-gradient(ellipse at center, transparent 34%, rgba(120,0,0,0.6) 100%);
+  transition: opacity 0.5s;
+}
+/* 피격 방향 표시 */
+#dmgDirs { position: absolute; left: 50%; top: 50%; width: 0; height: 0; }
+.dmgdir {
+  position: absolute; left: -6px; top: -130px; width: 12px; height: 42px;
+  background: linear-gradient(180deg, rgba(229,72,77,0.95), transparent);
+  transform-origin: 6px 130px; opacity: 1;
+  animation: fadeOut 1.1s ease-out forwards;
+}
+@keyframes fadeOut { to { opacity: 0; } }
+
+/* --- 좌상단: 미션 --- */
+#mission {
+  position: absolute; left: calc(12px + var(--safe-l)); top: calc(10px + var(--safe-t));
+  max-width: 44vw;
+}
+#missionTitle { font-size: 11px; color: var(--accent); letter-spacing: 2px; font-weight: 800; }
+#timer { font-size: 22px; font-weight: 800; line-height: 1.15; }
+#timer.urgent { color: var(--danger); animation: pulse 1s infinite; }
+@keyframes pulse { 50% { opacity: 0.45; } }
+.site {
+  display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--dim); margin-top: 4px;
+}
+.site .pill {
+  width: 17px; height: 17px; border-radius: 5px; display: grid; place-items: center;
+  font-size: 10px; font-weight: 800; border: 1px solid var(--line); flex: none;
+}
+.site.done { color: var(--accent-2); }
+.site.done .pill { background: var(--accent-2); border-color: var(--accent-2); color: #07160f; }
+.site .prog {
+  width: 46px; height: 3px; background: rgba(255,255,255,0.12); border-radius: 2px; overflow: hidden;
+}
+.site .prog > i { display: block; height: 100%; width: 0%; background: var(--accent); }
+
+/* --- 우상단: 팀 --- */
+#team {
+  position: absolute; right: calc(12px + var(--safe-r)); top: calc(10px + var(--safe-t));
+  display: flex; flex-direction: column; gap: 5px; align-items: flex-end;
+}
+.mate {
+  display: flex; align-items: center; gap: 7px;
+  background: rgba(10,12,16,0.55); border: 1px solid var(--line);
+  border-radius: 7px; padding: 4px 8px; font-size: 11.5px; min-width: 122px;
+}
+.mate .nm { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.mate .hpbar { width: 34px; height: 3px; background: rgba(255,255,255,0.13); border-radius: 2px; overflow: hidden; }
+.mate .hpbar > i { display: block; height: 100%; background: var(--accent-2); }
+.mate.down { opacity: 0.42; }
+.mate.down .nm { text-decoration: line-through; }
+.mate.me { border-color: rgba(255,157,60,0.5); }
+
+/* --- 좌하단: 체력 --- */
+#vitals {
+  position: absolute; left: calc(14px + var(--safe-l)); bottom: calc(14px + var(--safe-b));
+  width: 178px;
+}
+#hpWrap { display: flex; align-items: center; gap: 8px; }
+#hpBar {
+  flex: 1; height: 7px; background: rgba(255,255,255,0.12);
+  border-radius: 4px; overflow: hidden; border: 1px solid rgba(0,0,0,0.5);
+}
+#hpFill { display: block; height: 100%; width: 100%; background: var(--accent-2); transition: width 0.2s, background 0.2s; }
+#hpNum { font-size: 17px; font-weight: 800; width: 34px; text-align: right; }
+
+/* --- 우하단: 탄약 --- */
+#ammo {
+  position: absolute; right: calc(14px + var(--safe-r)); bottom: calc(100px + var(--safe-b));
+  text-align: right; line-height: 1;
+}
+#ammoMag { font-size: 30px; font-weight: 800; }
+#ammoMag.empty { color: var(--danger); }
+#ammoRes { font-size: 13px; color: var(--dim); }
+#wname { font-size: 10.5px; color: var(--dim); letter-spacing: 2px; margin-bottom: 3px; }
+#reloadHint {
+  font-size: 11.5px; color: var(--accent); margin-top: 4px; font-weight: 700;
+}
+
+/* --- 중앙 하단: 상호작용 --- */
+#interact {
+  position: absolute; left: 50%; bottom: 26%; transform: translateX(-50%);
+  text-align: center; pointer-events: none;
+}
+#interactText {
+  background: rgba(10,12,16,0.8); border: 1px solid var(--line);
+  border-radius: 8px; padding: 7px 13px; font-size: 12.5px; white-space: nowrap;
+}
+#interactBar {
+  width: 150px; height: 5px; margin: 7px auto 0;
+  background: rgba(255,255,255,0.14); border-radius: 3px; overflow: hidden;
+}
+#interactBar > i { display: block; height: 100%; width: 0%; background: var(--accent-2); }
+
+/* --- 상단 중앙: 안내 토스트 --- */
+#toasts {
+  position: absolute; left: 50%; top: calc(12px + var(--safe-t)); transform: translateX(-50%);
+  display: flex; flex-direction: column; gap: 5px; align-items: center; max-width: 46vw;
+}
+.toast {
+  background: rgba(10,12,16,0.82); border: 1px solid var(--line);
+  border-radius: 7px; padding: 6px 12px; font-size: 12px; text-align: center;
+  animation: toastIn 0.2s ease-out;
+}
+.toast.warn { border-color: rgba(229,72,77,0.55); color: #ffb3b5; }
+.toast.good { border-color: rgba(79,209,161,0.5); color: #9ff0d3; }
+@keyframes toastIn { from { opacity: 0; transform: translateY(-6px); } }
+
+/* --- FPS --- */
+#fps {
+  position: absolute; left: 50%; top: calc(4px + var(--safe-t)); transform: translateX(-50%);
+  font-size: 10.5px; color: var(--dim); letter-spacing: 1px;
+}
+
+/* ==========================================================================
+ *  4. 모바일 조작
+ *     - 왼쪽 아래: 가상 조이스틱
+ *     - 오른쪽: 화면 드래그로 시점
+ *     - 버튼은 전부 반투명, 서로 안 겹치게
+ * ======================================================================= */
+#touch { position: fixed; inset: 0; z-index: 25; pointer-events: none; }
+#touch.off { display: none; }
+
+/* 시점 회전용 투명 영역 (오른쪽 절반) */
+#lookZone {
+  position: absolute; right: 0; top: 0; width: 58%; height: 100%;
+  pointer-events: auto;
+}
+/* 조이스틱 영역 (왼쪽 아래) */
+#moveZone {
+  position: absolute; left: 0; bottom: 0; width: 42%; height: 74%;
+  pointer-events: auto;
+}
+#stick {
+  position: absolute; width: 116px; height: 116px; border-radius: 50%;
+  border: 2px solid rgba(255,255,255,0.20); background: rgba(255,255,255,0.055);
+  transform: translate(-50%, -50%); opacity: 0; transition: opacity 0.15s;
+  pointer-events: none;
+}
+#stick.on { opacity: 1; }
+#stickKnob {
+  position: absolute; left: 50%; top: 50%; width: 50px; height: 50px; border-radius: 50%;
+  background: rgba(255,255,255,0.26); border: 1px solid rgba(255,255,255,0.42);
+  transform: translate(-50%, -50%);
+}
+
+/* 공통 터치 버튼 */
+.tbtn {
+  position: absolute; pointer-events: auto;
+  display: grid; place-items: center; text-align: center;
+  border-radius: 50%; border: 1.5px solid rgba(255,255,255,0.22);
+  background: rgba(255,255,255,0.085);
+  color: rgba(255,255,255,0.9); font-weight: 800; font-size: 11.5px; line-height: 1.15;
+  backdrop-filter: blur(3px);
+  transition: background 0.08s, transform 0.08s;
+}
+.tbtn:active, .tbtn.held { background: rgba(255,157,60,0.42); transform: scale(0.94); }
+.tbtn.sq { border-radius: 13px; }
+.tbtn small { display: block; font-size: 9px; opacity: 0.62; font-weight: 600; }
+
+/* 오른쪽 아래 뭉치 */
+#btnFire {
+  right: calc(20px + var(--safe-r)); bottom: calc(18px + var(--safe-b));
+  width: 92px; height: 92px; font-size: 13px;
+  background: rgba(229,72,77,0.24); border-color: rgba(229,72,77,0.55);
+}
+#btnAds {
+  right: calc(122px + var(--safe-r)); bottom: calc(28px + var(--safe-b));
+  width: 60px; height: 60px;
+}
+#btnReload {
+  right: calc(26px + var(--safe-r)); bottom: calc(122px + var(--safe-b));
+  width: 58px; height: 58px;
+}
+#btnUse {
+  right: calc(118px + var(--safe-r)); bottom: calc(100px + var(--safe-b));
+  width: 60px; height: 60px;
+  background: rgba(79,209,161,0.2); border-color: rgba(79,209,161,0.5);
+}
+
+/* 왼쪽 아래 뭉치 - 조이스틱과 안 겹치게 위쪽/구석에 */
+#btnJump {
+  left: calc(150px + var(--safe-l)); bottom: calc(22px + var(--safe-b));
+  width: 56px; height: 56px;
+}
+#btnCrouch {
+  left: calc(150px + var(--safe-l)); bottom: calc(88px + var(--safe-b));
+  width: 56px; height: 56px;
+}
+#btnSprint {
+  left: calc(16px + var(--safe-l)); bottom: calc(150px + var(--safe-b));
+  width: 56px; height: 56px;
+}
+.tbtn.toggled { background: rgba(255,157,60,0.34); border-color: var(--accent); }
+
+/* 좌상단 작은 버튼 (설정 / 나가기) */
+#btnMenu {
+  position: absolute; pointer-events: auto;
+  left: calc(12px + var(--safe-l)); bottom: calc(14px + var(--safe-b));
+  width: 40px; height: 40px; border-radius: 10px;
+  border: 1px solid rgba(255,255,255,0.18); background: rgba(255,255,255,0.07);
+  color: var(--ink); font-size: 15px; display: grid; place-items: center;
+}
+
+/* 화면이 작으면 버튼도 줄인다 */
+@media (max-height: 420px) {
+  #btnFire { width: 76px; height: 76px; }
+  #btnAds, #btnReload, #btnUse, #btnJump, #btnCrouch, #btnSprint { width: 50px; height: 50px; }
+  #btnAds    { right: calc(104px + var(--safe-r)); bottom: calc(22px + var(--safe-b)); }
+  #btnReload { right: calc(22px + var(--safe-r)); bottom: calc(102px + var(--safe-b)); }
+  #btnUse    { right: calc(100px + var(--safe-r)); bottom: calc(84px + var(--safe-b)); }
+  #btnJump   { left: calc(132px + var(--safe-l)); bottom: calc(18px + var(--safe-b)); }
+  #btnCrouch { left: calc(132px + var(--safe-l)); bottom: calc(76px + var(--safe-b)); }
+  #btnSprint { left: calc(14px + var(--safe-l)); bottom: calc(130px + var(--safe-b)); }
+  #stick { width: 96px; height: 96px; }
+  #stickKnob { width: 42px; height: 42px; }
+}
+
+/* ==========================================================================
+ *  5. 설정 / 일시정지 / 결과
+ * ======================================================================= */
+#pause .card, #end .card { max-width: 520px; }
+
+.setting { display: flex; align-items: center; gap: 12px; margin-bottom: 13px; }
+.setting > label { flex: none; width: 96px; margin: 0; font-size: 12px; }
+.setting input[type=range] { flex: 1; accent-color: var(--accent); }
+.setting .val { width: 46px; text-align: right; font-size: 12px; color: var(--dim); }
+
+.switch { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 12.5px; }
+.switch input { accent-color: var(--accent); width: 16px; height: 16px; }
+
+#endTitle { font-size: 30px; font-weight: 800; letter-spacing: 3px; margin: 0 0 4px; }
+#endTitle.win  { color: var(--accent-2); }
+#endTitle.lose { color: var(--danger); }
+#endStats { list-style: none; padding: 0; margin: 14px 0 0; display: flex; flex-direction: column; gap: 6px; }
+#endStats li {
+  display: flex; gap: 10px; padding: 8px 11px; border-radius: 8px;
+  background: rgba(255,255,255,0.045); border: 1px solid var(--line); font-size: 13px;
+}
+#endStats .k { margin-left: auto; color: var(--accent); font-weight: 800; }
+
+/* 총 위치 조절 패널 (개발용, PC 에서 V) */
+#tuner {
+  position: fixed; right: 10px; top: 10px; z-index: 60; width: 260px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+  padding: 12px; font-size: 11.5px; pointer-events: auto;
+}
+#tuner .setting > label { width: 54px; }
+#tunerOut {
+  width: 100%; height: 62px; margin-top: 8px; font-size: 10px; font-family: ui-monospace, monospace;
+  background: rgba(0,0,0,0.5); color: var(--accent-2); border: 1px solid var(--line);
+  border-radius: 6px; padding: 6px; resize: none;
+}
+</style>
+</head>
+
+<body>
+
+<!-- ====================================================================== -->
+<!--  세로 모드 경고                                                        -->
+<!-- ====================================================================== -->
+<div id="rotate">
+  <div class="phone"></div>
+  <div>
+    <div style="font-size:17px;font-weight:800;margin-bottom:6px;">기기를 가로로 돌려주세요</div>
+    <div class="hint">이 게임은 가로 모드 전용입니다.</div>
+  </div>
+</div>
+
+<!-- ====================================================================== -->
+<!--  1. 로딩                                                               -->
+<!-- ====================================================================== -->
+<section id="boot" class="screen">
+  <div class="card" style="max-width:420px;text-align:center;">
+    <h1>MARKET <span class="accent">RAID</span></h1>
+    <p class="sub">남부 재래시장 · 폭발물 해체 작전</p>
+    <div class="bar"><i id="bootBar"></i></div>
+    <div id="bootMsg">엔진 준비 중…</div>
+  </div>
+</section>
+
+<!-- ====================================================================== -->
+<!--  2. 메인 메뉴                                                          -->
+<!-- ====================================================================== -->
+<section id="menu" class="screen" hidden>
+  <div class="card">
+    <h1>MARKET <span class="accent">RAID</span></h1>
+    <p class="sub">2~4인 협동 · 시장 실내 · 폭발물 2개 해체</p>
+
+    <div style="margin-bottom:14px;">
+      <label for="nick">호출 부호</label>
+      <input id="nick" type="text" maxlength="12" placeholder="대원" autocomplete="off">
+    </div>
+
+    <div style="margin-bottom:6px;"><label>주무장</label></div>
+    <div class="chip-group" id="weaponPick" style="margin-bottom:16px;">
+      <button class="chip" data-w="rifle"  aria-pressed="true">M416 돌격소총</button>
+      <button class="chip" data-w="smg"    aria-pressed="false">UMP9 기관단총</button>
+      <button class="chip" data-w="sniper" aria-pressed="false">AWM 저격총</button>
+    </div>
+
+    <div class="divider"></div>
+
+    <div class="grid2">
+      <div>
+        <label>새 작전 시작</label>
+        <button id="btnCreate" class="primary" style="width:100%;">방 만들기</button>
+        <p class="hint" style="margin-top:8px;">방을 만들면 5자리 코드가 나옵니다.<br>동료에게 코드를 알려주세요.</p>
+      </div>
+      <div>
+        <label for="joinCode">방 코드로 입장</label>
+        <input id="joinCode" type="text" maxlength="5" placeholder="ABCDE" autocomplete="off"
+               autocapitalize="characters" spellcheck="false">
+        <button id="btnJoin" style="width:100%;margin-top:9px;">입장</button>
+      </div>
+    </div>
+
+    <p id="menuErr" class="err"></p>
+
+    <div class="divider"></div>
+    <div class="row">
+      <button id="btnSettings" class="ghost">⚙ 그래픽 / 조작 설정</button>
+      <button id="btnSolo" class="ghost">혼자 연습하기</button>
+    </div>
+    <p class="hint" style="margin-top:12px;">
+      조작 — <b>모바일:</b> 왼쪽 드래그 이동 / 오른쪽 드래그 시점 / 버튼으로 사격·재장전·점프·달리기<br>
+      <b>PC:</b> WASD 이동 · 마우스 시점 · 좌클릭 사격 · 우클릭 정조준 · R 재장전 ·
+      Shift 달리기 · C 앉기 · Space 점프 · E 해체
+    </p>
+  </div>
+</section>
+
+<!-- ====================================================================== -->
+<!--  3. 로비                                                               -->
+<!-- ====================================================================== -->
+<section id="lobby" class="screen" hidden>
+  <div class="card">
+    <h1 style="font-size:19px;letter-spacing:2px;">작전 대기실</h1>
+    <p class="sub">방 코드를 동료에게 알려주세요 (최대 4명)</p>
+
+    <div id="roomCode">-----</div>
+    <div class="row" style="margin-bottom:16px;">
+      <button id="btnCopy" class="ghost">코드 복사</button>
+      <button id="btnLeave" class="ghost">나가기</button>
+    </div>
+
+    <div class="grid2">
+      <div>
+        <label>대원 <span id="playerCount">0/4</span></label>
+        <ul id="playerList"></ul>
+      </div>
+      <div>
+        <label>작전 설정 <span id="hostNote" class="hint"></span></label>
+
+        <div style="margin-bottom:10px;">
+          <div class="hint" style="margin-bottom:5px;">적 인원</div>
+          <div class="chip-group" id="botPick">
+            <button class="chip" data-n="2">2명</button>
+            <button class="chip" data-n="3">3명</button>
+            <button class="chip" data-n="4" aria-pressed="true">4명</button>
+            <button class="chip" data-n="5">5명</button>
+          </div>
+        </div>
+
+        <div style="margin-bottom:10px;">
+          <div class="hint" style="margin-bottom:5px;">난이도</div>
+          <div class="chip-group" id="diffPick">
+            <button class="chip" data-d="easy">쉬움</button>
+            <button class="chip" data-d="normal" aria-pressed="true">보통</button>
+            <button class="chip" data-d="hard">어려움</button>
+          </div>
+        </div>
+
+        <div style="margin-bottom:12px;">
+          <div class="hint" style="margin-bottom:5px;">내 주무장</div>
+          <div class="chip-group" id="weaponPick2">
+            <button class="chip" data-w="rifle" aria-pressed="true">M416</button>
+            <button class="chip" data-w="smg">UMP9</button>
+            <button class="chip" data-w="sniper">AWM</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="divider"></div>
+    <div class="row">
+      <button id="btnReady">준비 완료</button>
+      <button id="btnStart" class="primary">작전 개시</button>
+    </div>
+    <p id="lobbyErr" class="err"></p>
+  </div>
+</section>
+
+<!-- ====================================================================== -->
+<!--  4. 인게임 HUD                                                         -->
+<!-- ====================================================================== -->
+<div id="hud" hidden>
+  <div id="vignette"></div>
+  <div id="lowhp"></div>
+  <div id="dmgDirs"></div>
+
+  <div id="crosshair">
+    <i class="cv t"></i><i class="cv b"></i><i class="ch l"></i><i class="ch r"></i><i class="dot"></i>
+  </div>
+  <div id="hitmark"><i class="a"></i><i class="b"></i><i class="c"></i><i class="d"></i></div>
+
+  <div id="fps" hidden></div>
+  <div id="toasts"></div>
+
+  <div id="mission">
+    <div id="missionTitle">폭발물 해체</div>
+    <div id="timer">6:00</div>
+    <div id="siteList"></div>
+  </div>
+
+  <div id="team"></div>
+
+  <div id="vitals">
+    <div id="hpWrap">
+      <div id="hpBar"><i id="hpFill"></i></div>
+      <div id="hpNum">100</div>
+    </div>
+  </div>
+
+  <div id="ammo">
+    <div id="wname">M416</div>
+    <div><span id="ammoMag">30</span><span id="ammoRes"> / 150</span></div>
+    <div id="reloadHint" hidden>재장전 중…</div>
+  </div>
+
+  <div id="interact" hidden>
+    <div id="interactText">해체하려면 누르고 있기</div>
+    <div id="interactBar"><i></i></div>
+  </div>
+</div>
+
+<!-- ====================================================================== -->
+<!--  5. 모바일 터치 조작                                                   -->
+<!-- ====================================================================== -->
+<div id="touch" hidden>
+  <div id="lookZone"></div>
+  <div id="moveZone">
+    <div id="stick"><div id="stickKnob"></div></div>
+  </div>
+
+  <button id="btnFire"   class="tbtn">발사</button>
+  <button id="btnAds"    class="tbtn">정조준<small>ADS</small></button>
+  <button id="btnReload" class="tbtn">재장전<small>R</small></button>
+  <button id="btnUse"    class="tbtn">해체<small>E</small></button>
+  <button id="btnJump"   class="tbtn">점프</button>
+  <button id="btnCrouch" class="tbtn">앉기</button>
+  <button id="btnSprint" class="tbtn">달리기</button>
+  <button id="btnMenu">☰</button>
+</div>
+
+<!-- ====================================================================== -->
+<!--  6. 설정 / 일시정지                                                    -->
+<!-- ====================================================================== -->
+<section id="pause" class="screen" hidden style="z-index:70;">
+  <div class="card">
+    <h1 style="font-size:19px;letter-spacing:2px;">설정</h1>
+    <p class="sub">화질을 낮추면 프레임이 올라갑니다</p>
+
+    <div style="margin-bottom:6px;"><label>그래픽 품질</label></div>
+    <div class="chip-group" id="qualityPick" style="margin-bottom:16px;">
+      <button class="chip" data-q="low">낮음</button>
+      <button class="chip" data-q="medium">보통</button>
+      <button class="chip" data-q="high" aria-pressed="true">높음</button>
+      <button class="chip" data-q="ultra">최고</button>
+    </div>
+
+    <div class="setting">
+      <label for="setSens">시점 감도</label>
+      <input id="setSens" type="range" min="0.3" max="2.5" step="0.05" value="1">
+      <span class="val" id="setSensVal">1.00</span>
+    </div>
+    <div class="setting">
+      <label for="setFov">시야각</label>
+      <input id="setFov" type="range" min="60" max="100" step="1" value="74">
+      <span class="val" id="setFovVal">74</span>
+    </div>
+    <div class="setting">
+      <label for="setVol">효과음</label>
+      <input id="setVol" type="range" min="0" max="1" step="0.05" value="0.7">
+      <span class="val" id="setVolVal">70%</span>
+    </div>
+
+    <div class="row" style="margin:4px 0 14px;">
+      <label class="switch"><input id="setAuto" type="checkbox" checked> 자동 화질 조절</label>
+      <label class="switch"><input id="setInvert" type="checkbox"> 상하 반전</label>
+      <label class="switch"><input id="setFps" type="checkbox"> FPS 표시</label>
+      <label class="switch"><input id="setLeft" type="checkbox"> 왼손잡이 배치</label>
+    </div>
+
+    <div class="divider"></div>
+    <div class="row">
+      <button id="btnResume" class="primary">계속하기</button>
+      <button id="btnQuit" class="ghost">작전 포기</button>
+    </div>
+  </div>
+</section>
+
+<!-- ====================================================================== -->
+<!--  7. 결과                                                               -->
+<!-- ====================================================================== -->
+<section id="end" class="screen" hidden style="z-index:80;">
+  <div class="card">
+    <h2 id="endTitle">작전 성공</h2>
+    <p id="endReason" class="sub">폭발물 전량 해체</p>
+    <ul id="endStats"></ul>
+    <div class="divider"></div>
+    <div class="row">
+      <button id="btnAgain" class="primary">다시 하기</button>
+      <button id="btnToMenu" class="ghost">메뉴로</button>
+    </div>
+  </div>
+</section>
+
+<!-- ====================================================================== -->
+<!--  8. 총 위치 조절 (개발용 - PC 에서 V 키)                                -->
+<!-- ====================================================================== -->
+<div id="tuner" hidden>
+  <div style="font-weight:800;margin-bottom:8px;">총 위치 조절 (V 로 닫기)</div>
+  <div class="setting"><label>오른쪽</label><input id="tnX" type="range" min="-0.6" max="0.6" step="0.005"><span class="val" id="tnXv"></span></div>
+  <div class="setting"><label>위</label><input id="tnY" type="range" min="-0.6" max="0.4" step="0.005"><span class="val" id="tnYv"></span></div>
+  <div class="setting"><label>앞</label><input id="tnZ" type="range" min="-1.2" max="0.2" step="0.005"><span class="val" id="tnZv"></span></div>
+  <div class="setting"><label>회전 X</label><input id="tnRX" type="range" min="-3.2" max="3.2" step="0.01"><span class="val" id="tnRXv"></span></div>
+  <div class="setting"><label>회전 Y</label><input id="tnRY" type="range" min="-3.2" max="3.2" step="0.01"><span class="val" id="tnRYv"></span></div>
+  <div class="setting"><label>회전 Z</label><input id="tnRZ" type="range" min="-3.2" max="3.2" step="0.01"><span class="val" id="tnRZv"></span></div>
+  <div class="setting"><label>크기</label><input id="tnS" type="range" min="0.2" max="3" step="0.01"><span class="val" id="tnSv"></span></div>
+  <textarea id="tunerOut" readonly></textarea>
+  <button id="tnCopy" style="width:100%;margin-top:6px;padding:7px;">config.js 에 붙여넣을 값 복사</button>
+</div>
+
+<!-- ====================================================================== -->
+<!--  모듈 로딩                                                             -->
+<!--  three.js 는 서버가 /vendor/three 로 로컬 서빙한다 (CDN 없이 동작)      -->
+<!-- ====================================================================== -->
+<script type="importmap">
+{
+  "imports": {
+    "three": "/vendor/three/build/three.module.js",
+    "three/addons/": "/vendor/three/examples/jsm/"
+  }
+}
+</script>
+<script src="/socket.io/socket.io.js"></script>
+<script type="module" src="/js/game.js"></script>
+</body>
+</html>

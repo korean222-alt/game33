@@ -18,7 +18,7 @@ import { Server } from 'socket.io';
 
 import {
   MAP, COLLIDERS, SPAWNS, BOMB_SITES, BOT_SPAWNS, PATROL_NODES,
-  resolveCircle, hasLineOfSight, rayWallDistance, segmentHitsBox,
+  resolveCircle, raycastBoxes, hasLineOfSight3D,
 } from './public/js/map-data.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -180,16 +180,31 @@ function spawnBots(room) {
   }
 }
 
-/** 봇이 특정 플레이어를 볼 수 있는가 */
+/** 플레이어의 현재 눈높이 (앉으면 낮아진다) */
+function eyeOf(p) {
+  return p.crouch ? PLAYER_EYE - 0.45 : PLAYER_EYE;
+}
+
+/**
+ * 봇이 특정 플레이어를 볼 수 있는가.
+ *
+ * ★ 3D 로 본다. 예전에는 평면으로만 봐서, 드럼통(0.99m) 뒤에 앉아 있어도
+ *   봇이 그대로 보고 쐈다. 이제는 앉아서 엄폐하면 실제로 안 보인다.
+ *   가슴 높이도 같이 검사해서 "머리만 빼꼼" 도 인지하게 한다.
+ */
 function botCanSee(bot, p) {
   const d = dist2D(bot, p);
   if (d > BOT_VIEW_DIST) return false;
+
   // 시야각
   const toX = p.x - bot.x, toZ = p.z - bot.z;
   const fwdX = -Math.sin(bot.yaw), fwdZ = -Math.cos(bot.yaw);
   const dot = (toX * fwdX + toZ * fwdZ) / (d || 1);
   if (dot < Math.cos(BOT_FOV / 2) && d > 2.5) return false; // 2.5m 이내는 뒤통수도 인지
-  return hasLineOfSight(bot.x, bot.z, p.x, p.z, 1.35);
+
+  const eye = eyeOf(p);
+  return hasLineOfSight3D(bot.x, BOT_EYE, bot.z, p.x, eye, p.z, COLLIDERS)
+      || hasLineOfSight3D(bot.x, BOT_EYE, bot.z, p.x, eye - 0.45, p.z, COLLIDERS);
 }
 
 function botFindTarget(room, bot) {
@@ -310,10 +325,14 @@ function updateBots(room, dt, io) {
           else if (target.moving) chance *= 0.88;
           if (target.crouch) chance *= 0.85;
 
-          const hit = Math.random() < chance;
+          // 조준선이 엄폐물에 막히면 아무리 명중률이 높아도 못 맞힌다
+          const aimY = eyeOf(target) - 0.25;
+          const clear = hasLineOfSight3D(bot.x, BOT_EYE, bot.z, target.x, aimY, target.z, COLLIDERS);
+          const hit = clear && Math.random() < chance;
+
           io.to(room.code).emit('botShot', {
             id: bot.id, x: bot.x, y: BOT_EYE, z: bot.z,
-            tx: target.x, ty: PLAYER_EYE - 0.2, tz: target.z, hit,
+            tx: target.x, ty: aimY, tz: target.z, hit,
           });
 
           if (hit) {
@@ -387,9 +406,10 @@ function resolveShot(room, shooter, origin, dir, io) {
   const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
   const d = { x: dir.x / len, y: dir.y / len, z: dir.z / len };
 
-  // 수평 성분 (벽 판정은 2D 로)
-  const hLen = Math.hypot(d.x, d.z) || 1e-6;
-  const wallDist = rayWallDistance(origin.x, origin.z, d.x / hLen, d.z / hLen, w.range, 1.2, COLLIDERS) / hLen;
+  // ★ 3D 로 막힌 지점을 찾는다.
+  //   평면 판정이면 상자/드럼통 위로 넘어가는 총알까지 막혀버리고,
+  //   반대로 낮은 엄폐물 뒤에 앉은 적이 그냥 맞아버린다.
+  const wallDist = raycastBoxes(origin.x, origin.y, origin.z, d.x, d.y, d.z, w.range, COLLIDERS);
 
   let best = null;
   let bestT = Math.min(w.range, wallDist);
