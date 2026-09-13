@@ -18,7 +18,7 @@ import { Server } from 'socket.io';
 
 import {
   MAP, COLLIDERS, SPAWNS, BOMB_SITES, BOT_SPAWNS, PATROL_NODES,
-  resolveCircle, hasLineOfSight, rayWallDistance, segmentHitsBox,
+  resolveCircle, hasLineOfSight, rayObstacleDistance, segmentHitsBox,
 } from './public/js/map-data.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -388,8 +388,7 @@ function resolveShot(room, shooter, origin, dir, io) {
   const d = { x: dir.x / len, y: dir.y / len, z: dir.z / len };
 
   // 수평 성분 (벽 판정은 2D 로)
-  const hLen = Math.hypot(d.x, d.z) || 1e-6;
-  const wallDist = rayWallDistance(origin.x, origin.z, d.x / hLen, d.z / hLen, w.range, 1.2, COLLIDERS) / hLen;
+  const wallDist = rayObstacleDistance(origin, d, w.range);
 
   let best = null;
   let bestT = Math.min(w.range, wallDist);
@@ -436,6 +435,7 @@ function startMatch(room, io) {
     p.ammo = WEAPONS[p.weapon].mag;
     p.reserve = WEAPONS[p.weapon].reserve;
     p.reloadUntil = 0; p.defusing = null;
+    p.lastShot = 0; p.moving = p.sprint = p.crouch = 0;
     i++;
   }
 
@@ -595,6 +595,7 @@ io.on('connection', (socket) => {
 
   /* ---- 방 만들기 / 들어가기 -------------------------------------------- */
   socket.on('createRoom', ({ name, weapon } = {}, cb) => {
+    leave();
     let code = makeRoomCode();
     while (rooms.has(code)) code = makeRoomCode();
     room = new Room(code);
@@ -611,7 +612,8 @@ io.on('connection', (socket) => {
     if (!r) return cb?.({ ok: false, error: '그런 방 코드가 없어요.' });
     if (r.players.size >= 4) return cb?.({ ok: false, error: '방이 꽉 찼어요 (최대 4명).' });
     if (r.state === 'active') return cb?.({ ok: false, error: '이미 작전이 진행 중이에요.' });
-
+    if (room === r) return cb?.({ ok: true, you: me.id, lobby: room.lobbyState() });
+    leave();
     room = r;
     me = room.addPlayer(socket, name, weapon);
     socket.join(room.code);
@@ -620,7 +622,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('setLoadout', ({ weapon, ready } = {}) => {
-    if (!me) return;
+    if (!me || room.state === 'active') return;
     if (weapon && WEAPONS[weapon]) {
       me.weapon = weapon;
       me.ammo = WEAPONS[weapon].mag;
@@ -631,7 +633,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('setRoomConfig', ({ botCount, difficulty } = {}) => {
-    if (!room || room.hostId !== socket.id) return;
+    if (!room || room.hostId !== socket.id || room.state === 'active') return;
     if (botCount) room.botCount = clamp(botCount | 0, 2, 5);
     if (difficulty && DIFFICULTY[difficulty]) room.difficulty = difficulty;
     io.to(room.code).emit('lobby', room.lobbyState());
@@ -640,12 +642,14 @@ io.on('connection', (socket) => {
   socket.on('startMatch', () => {
     if (!room || room.hostId !== socket.id) return;
     if (room.state === 'active') return;
+    if (![...room.players.values()].every(p => p.ready)) return;
     startMatch(room, io);
   });
 
   /* ---- 인게임 ---------------------------------------------------------- */
   socket.on('input', (d) => {
     if (!me || !room || room.state !== 'active' || !me.alive) return;
+    if (!d || !['x', 'y', 'z', 'yaw', 'pitch'].every(k => Number.isFinite(d[k]))) return;
     // 위치는 클라 예측을 신뢰하되 서버에서 한 번 더 충돌 보정 (벽 뚫기 방지)
     const fixed = resolveCircle(+d.x || 0, +d.z || 0, PLAYER_RADIUS, COLLIDERS);
     me.x = fixed.x;
@@ -660,6 +664,9 @@ io.on('connection', (socket) => {
 
   socket.on('shoot', (d, cb) => {
     if (!me || !room || room.state !== 'active' || !me.alive) return cb?.({ ok: false });
+    if (!d || !['dx', 'dy', 'dz'].every(k => Number.isFinite(d[k]))) return cb?.({ ok: false });
+    const length = Math.hypot(d.dx, d.dy, d.dz);
+    if (length < .00001) return cb?.({ ok: false });
     const w = WEAPONS[me.weapon];
     const t = now();
     if (me.reloadUntil > 0) return cb?.({ ok: false, reason: 'reloading' });
@@ -669,8 +676,8 @@ io.on('connection', (socket) => {
     me.lastShot = t;
     me.ammo--;
 
-    const origin = { x: me.x, y: PLAYER_EYE - (me.crouch ? 0.45 : 0), z: me.z };
-    const dir = { x: +d.dx || 0, y: +d.dy || 0, z: +d.dz || -1 };
+    const origin = { x: me.x, y: me.y + PLAYER_EYE - (me.crouch ? 0.45 : 0), z: me.z };
+    const dir = { x: d.dx / length, y: d.dy / length, z: d.dz / length };
     const res = resolveShot(room, me, origin, dir, io);
 
     io.to(room.code).emit('playerShot', {

@@ -35,19 +35,36 @@ export class Input {
     this._lookTouchId = null;
     this._stickTouchId = null;
     this._onLockChange = null;
+    this._resetButtons = [];
+    this._abort = new AbortController();
 
     this._bindKeyboard();
     this._bindMouse();
     this._bindTouch();
   }
 
+  _listen(target, type, listener, options = {}) {
+    target.addEventListener(type, listener, { ...options, signal: this._abort.signal });
+  }
+
+  dispose() { this.disable(); this._abort.abort(); }
+
   enable()  { this.enabled = true; }
   disable() {
     this.enabled = false;
+    this.reset();
+    this.releasePointer();
+  }
+
+  reset() {
     this._keys.clear();
     this.move.x = this.move.y = 0;
     this.fire = this.ads = this.sprint = this.crouch = this.jump = this.reload = this.use = false;
-    this.releasePointer();
+    this.look.dx = this.look.dy = 0;
+    this._lookTouchId = this._stickTouchId = null;
+    const knob = document.getElementById('knob');
+    if (knob) knob.style.transform = '';
+    this._resetButtons.forEach(reset => reset());
   }
 
   /** 이번 프레임 시점 이동량을 읽고 비운다 */
@@ -78,10 +95,11 @@ export class Input {
       this._keys.delete(e.code);
       this._syncKeys();
     };
-    addEventListener('keydown', down);
-    addEventListener('keyup', up);
+    this._listen(window, 'keydown', down);
+    this._listen(window, 'keyup', up);
     // 탭 전환 등으로 keyup 을 놓치면 키가 눌린 채로 남는다
-    addEventListener('blur', () => { this._keys.clear(); this._syncKeys(); });
+    this._listen(window, 'blur', () => this.reset());
+    this._listen(document, 'visibilitychange', () => { if (document.hidden) this.reset(); });
   }
 
   _syncKeys() {
@@ -104,28 +122,28 @@ export class Input {
 
   /* ---- PC: 마우스 + 포인터 락 ------------------------------------------- */
   _bindMouse() {
-    this.canvas.addEventListener('mousedown', (e) => {
+    this._listen(this.canvas, 'mousedown', (e) => {
       if (!this.enabled) return;
       if (!this.locked) { this.requestPointer(); return; }
       if (e.button === 0) this.fire = true;
       if (e.button === 2) this.ads = true;
     });
-    addEventListener('mouseup', (e) => {
+    this._listen(window, 'mouseup', (e) => {
       if (e.button === 0) this.fire = false;
       if (e.button === 2) this.ads = false;
     });
-    this.canvas.addEventListener('contextmenu', (e) => e.preventDefault());
+    this._listen(this.canvas, 'contextmenu', (e) => e.preventDefault());
 
-    addEventListener('mousemove', (e) => {
+    this._listen(window, 'mousemove', (e) => {
       if (!this.enabled || !this.locked) return;
       const s = this.settings.sensitivity ?? 1;
       this.look.dx += e.movementX * MOUSE_SENS * s;
       this.look.dy += e.movementY * MOUSE_SENS * s * (this.settings.invertY ? -1 : 1);
     });
 
-    document.addEventListener('pointerlockchange', () => {
+    this._listen(document, 'pointerlockchange', () => {
       this.locked = document.pointerLockElement === this.canvas;
-      if (!this.locked) { this.fire = false; this.ads = false; }
+      if (!this.locked) this.reset();
       this._onLockChange?.(this.locked);
     });
   }
@@ -134,7 +152,7 @@ export class Input {
 
   requestPointer() {
     if (isTouchDevice) return;
-    this.canvas.requestPointerLock?.();
+    try { this.canvas.requestPointerLock?.()?.catch?.(() => {}); } catch { /* Click to retry. */ }
   }
 
   releasePointer() {
@@ -180,21 +198,21 @@ export class Input {
         this.move.x = this.move.y = 0;
       }
     };
-    stick.addEventListener('touchstart', stickStart, { passive: false });
-    stick.addEventListener('touchmove', stickMove, { passive: false });
-    stick.addEventListener('touchend', stickEnd);
-    stick.addEventListener('touchcancel', stickEnd);
+    this._listen(stick, 'touchstart', stickStart, { passive: false });
+    this._listen(stick, 'touchmove', stickMove, { passive: false });
+    this._listen(stick, 'touchend', stickEnd);
+    this._listen(stick, 'touchcancel', stickEnd);
 
     // 화면 오른쪽 빈 곳을 끌면 시점 회전
     let last = { x: 0, y: 0 };
-    this.canvas.addEventListener('touchstart', (e) => {
+    this._listen(this.canvas, 'touchstart', (e) => {
       if (!this.enabled || this._lookTouchId !== null) return;
       const t = e.changedTouches[0];
       this._lookTouchId = t.identifier;
       last = { x: t.clientX, y: t.clientY };
     }, { passive: true });
 
-    this.canvas.addEventListener('touchmove', (e) => {
+    this._listen(this.canvas, 'touchmove', (e) => {
       if (this._lookTouchId === null) return;
       for (const t of e.changedTouches) {
         if (t.identifier !== this._lookTouchId) continue;
@@ -211,8 +229,8 @@ export class Input {
         if (t.identifier === this._lookTouchId) this._lookTouchId = null;
       }
     };
-    this.canvas.addEventListener('touchend', lookEnd);
-    this.canvas.addEventListener('touchcancel', lookEnd);
+    this._listen(this.canvas, 'touchend', lookEnd);
+    this._listen(this.canvas, 'touchcancel', lookEnd);
 
     // 버튼들
     this._holdBtn('bFire',  (v) => { this.fire = v; });
@@ -229,7 +247,8 @@ export class Input {
     const el = document.getElementById(id);
     if (!el) return;
     let on = false;
-    el.addEventListener('touchstart', (e) => {
+    this._resetButtons.push(() => { on = false; set(false); el.classList.remove('on'); });
+    this._listen(el, 'touchstart', (e) => {
       if (!this.enabled) return;
       if (toggle) { on = !on; set(on); el.classList.toggle('on', on); }
       else { set(true); el.classList.add('on'); }
@@ -239,14 +258,14 @@ export class Input {
       if (!toggle) { set(false); el.classList.remove('on'); }
       e.preventDefault();
     };
-    el.addEventListener('touchend', off);
-    el.addEventListener('touchcancel', off);
+    this._listen(el, 'touchend', off);
+    this._listen(el, 'touchcancel', off);
   }
 
   _tapBtn(id, fn) {
     const el = document.getElementById(id);
     if (!el) return;
-    el.addEventListener('touchstart', (e) => {
+    this._listen(el, 'touchstart', (e) => {
       if (!this.enabled) return;
       fn();
       el.classList.add('on');

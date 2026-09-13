@@ -59,7 +59,7 @@ function shortestAngle(from, to) {
  *  캐릭터 아바타 하나
  * ========================================================================== */
 class Avatar {
-  constructor(scene, assets, { color, name, isBot }) {
+  constructor(scene, assets, { color, name, isBot, weapon = 'rifle' }) {
     this.scene = scene;
     this.isBot = isBot;
     this.buffer = new InterpBuffer();
@@ -87,6 +87,24 @@ class Avatar {
     });
     this.group.add(body);
     this.body = body;
+    aimJoint(body, 'right_arm_06', 'right_forearm_07', [-.26, 1.16, -.12]);
+    aimJoint(body, 'right_forearm_07', 'right_wrist_08', [.08, 1.04, -.22]);
+    aimJoint(body, 'left_arm_03', 'left_forearm_04', [.28, 1.18, -.18]);
+    aimJoint(body, 'left_forearm_04', 'left_wrist_05', [.10, 1.13, -.52]);
+    this.joints = new Map();
+    for (const name of ['left_leg_09', 'right_leg_012', 'left_knee_010', 'right_knee_013', 'left_arm_03', 'right_arm_06']) {
+      const joint = body.getObjectByName(name);
+      if (joint) this.joints.set(name, { joint, rest: joint.quaternion.clone() });
+    }
+    // The supplied PSX character is rigged but contains no animation clips.
+    // Drive its actual limb joints without distorting or translating the mesh parts.
+    this.phase = 0;
+    this.lastPosition = null;
+    this.weapon = assets.instance(weapon);
+    this.weapon.rotation.y = Math.PI / 2;
+    this.weapon.position.set(.10, 1.14, -.28);
+    this.weapon.scale.setScalar(.78);
+    this.group.add(this.weapon);
 
     this.nameTag = makeNameTag(name, color);
     this.nameTag.position.y = 2.0;
@@ -101,6 +119,19 @@ class Avatar {
     const s = this.buffer.sample(renderTime);
     if (!s) return;
 
+    if (!Number.isFinite(s.x) || !Number.isFinite(s.z)) return;
+    const distance = this.lastPosition ? Math.hypot(s.x - this.lastPosition.x, s.z - this.lastPosition.z) : 0;
+    this.phase += Math.min(distance, .2) * 8;
+    this.lastPosition = { x: s.x, z: s.z };
+    const stride = distance > .0001 ? Math.sin(this.phase) * .42 : 0;
+    const axis = new THREE.Vector3(1, 0, 0);
+    for (const [name, { joint, rest }] of this.joints) {
+      const side = name.startsWith('left') ? 1 : -1;
+      let angle = stride * side;
+      if (name.includes('knee')) angle = Math.max(0, -angle) * .8;
+      if (name.includes('arm')) angle = 0; // Hold the weapon steady while the legs stride.
+      joint.quaternion.copy(rest).multiply(new THREE.Quaternion().setFromAxisAngle(axis, angle));
+    }
     this.group.position.set(s.x, s.y || 0, s.z);
     this.group.rotation.y = s.yaw;
     this.group.scale.y = s.crouch ? 0.72 : 1;
@@ -117,14 +148,28 @@ class Avatar {
 
   dispose() {
     this.scene.remove(this.group);
-    this.group.traverse((o) => {
-      if (o.geometry) o.geometry.dispose();
-      if (o.material) {
-        const mats = Array.isArray(o.material) ? o.material : [o.material];
-        for (const m of mats) { m.map?.dispose?.(); m.dispose?.(); }
-      }
+    // Geometry and texture maps belong to AssetManager and are shared by every
+    // avatar. Only this avatar's cloned body materials and name texture are owned here.
+    this.body.traverse(o => {
+      if (!o.isMesh) return;
+      for (const m of Array.isArray(o.material) ? o.material : [o.material]) m.dispose();
     });
+    this.nameTag.material.map.dispose();
+    this.nameTag.material.dispose();
   }
+}
+
+function aimJoint(body, name, childName, target) {
+  const joint = body.getObjectByName(name), child = body.getObjectByName(childName);
+  if (!joint || !child) return;
+  body.updateMatrixWorld(true);
+  const origin = joint.getWorldPosition(new THREE.Vector3());
+  const current = child.getWorldPosition(new THREE.Vector3()).sub(origin).normalize();
+  const wanted = new THREE.Vector3(...target).sub(origin).normalize();
+  const world = new THREE.Quaternion().setFromUnitVectors(current, wanted)
+    .multiply(joint.getWorldQuaternion(new THREE.Quaternion()));
+  joint.quaternion.copy(joint.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(world));
+  body.updateMatrixWorld(true);
 }
 
 /** 캔버스로 이름표 스프라이트를 만든다 */
@@ -171,7 +216,7 @@ export class Entities {
     for (const p of list) {
       if (p.id === this.myId || this.players.has(p.id)) continue;
       this.players.set(p.id, new Avatar(this.scene, this.assets, {
-        color: TEAM_COLORS[p.slot % TEAM_COLORS.length], name: p.name, isBot: false,
+        color: TEAM_COLORS[p.slot % TEAM_COLORS.length], name: p.name, isBot: false, weapon: p.weapon,
       }));
     }
   }
@@ -258,6 +303,12 @@ class Effects {
     m.position.set(pos.x, pos.y, pos.z);
     this.scene.add(m);
     this.sparks.push({ obj: m, life: 0.18 });
+    for (let i = 0; i < 5; i++) {
+      const particle = new THREE.Mesh(this.sparkGeo, this.sparkMat.clone());
+      particle.scale.setScalar(.35); particle.position.copy(m.position); this.scene.add(particle);
+      this.sparks.push({ obj: particle, life: .18,
+        velocity: new THREE.Vector3((Math.random() - .5) * 2.8, Math.random() * 2.5, (Math.random() - .5) * 2.8) });
+    }
   }
 
   /** 사격 한 발을 그린다 (from 에서 dir 로 dist 만큼) */
@@ -282,6 +333,7 @@ class Effects {
       const e = this.sparks[i];
       e.life -= dt;
       const k = Math.max(0, e.life / 0.18);
+      if (e.velocity) { e.velocity.y -= dt * 7; e.obj.position.addScaledVector(e.velocity, dt); }
       e.obj.material.opacity = k;
       e.obj.scale.setScalar(0.6 + (1 - k) * 1.6);
       if (e.life <= 0) { this.scene.remove(e.obj); e.obj.material.dispose(); this.sparks.splice(i, 1); }

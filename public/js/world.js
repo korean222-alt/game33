@@ -8,6 +8,7 @@
 import * as THREE from 'three';
 import { MAP, WALLS, PROPS, LIGHTS, BOMB_SITES } from './map-data.js';
 import { QUALITY } from './config.js';
+import { roomMaterials, dressRoom } from './visuals.js';
 
 /*
  * three r155 부터 조명이 물리 단위(칸델라)로 바뀌어서, map-data.js 의 intensity 값을
@@ -30,14 +31,16 @@ export class World {
     const q = QUALITY[qualityKey] || QUALITY.high;
     const s = this.scene;
 
-    s.background = new THREE.Color(0x0b0a08);
-    s.fog = new THREE.FogExp2(0x0b0a08, q.fogDensity);
+    s.background = new THREE.Color(0x101e28);
+    s.fog = new THREE.FogExp2(0x182a32, q.fogDensity);
+    this.materials = roomMaterials();
 
     this._buildShell();
     this._buildWalls();
     this._buildProps();
     this._buildLights(q);
     this._buildSiteMarkers();
+    this.dust = dressRoom(s, this.renderer);
 
     return this;
   }
@@ -46,7 +49,7 @@ export class World {
   _buildShell() {
     const floor = new THREE.Mesh(
       new THREE.PlaneGeometry(MAP.width, MAP.depth),
-      new THREE.MeshStandardMaterial({ color: MAP.floorColor, roughness: 0.95, metalness: 0.03 }),
+      this.materials.floor,
     );
     floor.rotation.x = -Math.PI / 2;
     floor.receiveShadow = true;
@@ -54,7 +57,7 @@ export class World {
 
     const ceil = new THREE.Mesh(
       new THREE.PlaneGeometry(MAP.width, MAP.depth),
-      new THREE.MeshStandardMaterial({ color: MAP.ceilColor, roughness: 1 }),
+      new THREE.MeshStandardMaterial({ color: 0x34414a, roughness: .9 }),
     );
     ceil.rotation.x = Math.PI / 2;
     ceil.position.y = MAP.height;
@@ -63,9 +66,7 @@ export class World {
 
   /* ---- 벽 --------------------------------------------------------------- */
   _buildWalls() {
-    const matWall = new THREE.MeshStandardMaterial({
-      color: MAP.wallColor, roughness: 0.92, metalness: 0.04,
-    });
+    const matWall = this.materials.wall;
     // 벽은 전부 같은 머티리얼 + 박스라 인스턴싱으로 드로우콜을 1개로 줄인다.
     const geo = new THREE.BoxGeometry(1, 1, 1);
     const mesh = new THREE.InstancedMesh(geo, matWall, WALLS.length);
@@ -103,27 +104,21 @@ export class World {
 
   /* ---- 조명 ------------------------------------------------------------- */
   _buildLights(q) {
-    this.scene.add(new THREE.AmbientLight(0x30302c, 0.55));
+    const ambient = new THREE.AmbientLight(0xbdced7, .6);
+    ambient.layers.enable(1); this.scene.add(ambient);
 
-    const hemi = new THREE.HemisphereLight(0x4a4438, 0x14120e, 0.5);
+    const hemi = new THREE.HemisphereLight(0xc6e8ff, 0x756247, .8);
+    hemi.layers.enable(1);
     this.scene.add(hemi);
 
     // 천장 전구. 품질에 따라 개수를 줄이고, 가장 밝은 것 하나만 그림자를 만든다.
     const lights = LIGHTS.slice(0, q.pointLights);
-    let shadowGiven = false;
     for (const L of lights) {
       const light = new THREE.PointLight(
         L.color, L.intensity * LIGHT_INTENSITY_SCALE, L.distance, 2,
       );
       light.position.set(L.x, L.y, L.z);
-      if (q.shadows && !shadowGiven) {
-        light.castShadow = true;
-        light.shadow.mapSize.set(q.shadowMapSize, q.shadowMapSize);
-        light.shadow.radius = q.shadowRadius;
-        light.shadow.bias = -0.004;
-        light.shadow.camera.far = 14;
-        shadowGiven = true;
-      }
+      light.layers.enable(1);
       this.scene.add(light);
       this.pointLights.push(light);
 
@@ -135,6 +130,13 @@ export class World {
       bulb.position.copy(light.position);
       this.scene.add(bulb);
     }
+    // One spotlight shadow replaces six large cube-shadow faces from a point light.
+    const key = new THREE.SpotLight(0xffdfb0, 85, 20, Math.PI * .45, .65, 2);
+    key.position.set(-2.8, 3.05, 1.9); key.target.position.set(0, 0, -.5);
+    key.castShadow = q.shadows; key.shadow.mapSize.set(q.shadowMapSize, q.shadowMapSize);
+    key.shadow.bias = -.0005; key.shadow.normalBias = .025;
+    key.shadow.camera.near = .1; key.shadow.camera.far = 20;
+    key.layers.enable(1); this.scene.add(key, key.target); this.keyLight = key;
   }
 
   /* ---- 폭발물 지점 표시 -------------------------------------------------- */
@@ -191,6 +193,7 @@ export class World {
 
   update(dt) {
     this._t += dt;
+    if (this.dust) this.dust.position.y = Math.sin(this._t * .12) * .08;
     // 미해체 지점의 LED 를 깜빡여서 눈에 띄게
     const blink = (Math.sin(this._t * 5) + 1) * 0.5;
     for (const m of this.siteMarkers.values()) {

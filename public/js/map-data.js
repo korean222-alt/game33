@@ -118,16 +118,16 @@ export const LIGHTS = [
  *  스폰 / 목표 / 봇 경로
  * -------------------------------------------------------------------------- */
 export const SPAWNS = [
-  { x: -1.1, z: 4.6, yaw: 0 },
-  { x: 1.1,  z: 4.6, yaw: 0 },
   { x: -3.4, z: 4.6, yaw: 0 },
-  { x: 3.4,  z: 4.6, yaw: 0 },
+  { x: 3.8,  z: 4.6, yaw: 0 },
+  { x: -3.4, z: 3.8, yaw: 0 },
+  { x: 3.8,  z: 3.8, yaw: 0 },
 ];
 
 // 폭발물 해체 지점
 export const BOMB_SITES = [
   { id: 'A', x: 2.0,  z: -4.1, label: '창고 A' },
-  { id: 'B', x: -6.7, z: 2.5,  label: '서편 통로 B' },
+  { id: 'B', x: -6.2, z: 1.55, label: '서편 통로 B' },
 ];
 
 export const BOT_SPAWNS = [
@@ -247,6 +247,31 @@ export function rayWallDistance(ox, oz, dirX, dirZ, maxDist, eyeH = 1.4, collide
       if (t0 > t1) { ok = false; break; }
     }
     if (ok && t0 >= 0 && t0 < best) best = t0;
+  }
+  return best;
+}
+
+/** Distance along a normalized 3D ray: crouching, jumping and low cover all count. */
+export function rayObstacleDistance(origin, direction, maxDist, colliders = COLLIDERS) {
+  let best = maxDist;
+  for (const c of colliders) {
+    let near = 0, far = best;
+    for (const [o, d, lo, hi] of [
+      [origin.x, direction.x, c.x - c.w / 2, c.x + c.w / 2],
+      [origin.y, direction.y, 0, c.h],
+      [origin.z, direction.z, c.z - c.d / 2, c.z + c.d / 2],
+    ]) {
+      if (Math.abs(d) < 1e-8) { if (o < lo || o > hi) { far = -1; break; } continue; }
+      const a = (lo - o) / d, b = (hi - o) / d;
+      near = Math.max(near, Math.min(a, b)); far = Math.min(far, Math.max(a, b));
+      if (near > far) break;
+    }
+    if (near <= far && far >= 0) best = Math.min(best, near);
+  }
+  // Floor and ceiling are also visible shot surfaces.
+  if (Math.abs(direction.y) > 1e-8) for (const y of [0, MAP.height]) {
+    const t = (y - origin.y) / direction.y;
+    if (t >= 0) best = Math.min(best, t);
   }
   return best;
 }

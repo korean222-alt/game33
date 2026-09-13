@@ -16,29 +16,29 @@
  * -------------------------------------------------------------------------- */
 export const MODELS = {
   // --- 맵 소품 ---
-  stallTarp:  { url: '/assets/models/stall-tarp.glb',  scale: 1, rotY: 0,
+  stallTarp:  { url: '/assets/models/stall-tarp.glb',  scale: 1, rotY: 0, fit: { size: [2.83, 1.84, 2.23] },
                 placeholder: { type: 'stall', w: 2.83, h: 1.84, d: 2.23, color: 0x6b5c45 } },
-  stallWood:  { url: '/assets/models/stall-wood.glb',  scale: 1, rotY: 0,
+  stallWood:  { url: '/assets/models/stall-wood.glb',  scale: 1, rotY: 0, fit: { size: [5.0, 1.95 / 0.72, 2.05 / 0.72] },
                 placeholder: { type: 'stall', w: 5.13, h: 2.73, d: 2.86, color: 0x7a6647 } },
-  crate:      { url: '/assets/models/crate.glb',       scale: 1, rotY: 0,
+  crate:      { url: '/assets/models/crate.glb',       scale: 1, rotY: 0, fit: { height: 0.75 },
                 placeholder: { type: 'box', w: 0.75, h: 0.75, d: 0.75, color: 0x8a6b3f } },
-  barrel:     { url: '/assets/models/barrel.glb',      scale: 1, rotY: 0,
+  barrel:     { url: '/assets/models/barrel.glb',      scale: 1, rotY: 0, fit: { height: 0.99 },
                 placeholder: { type: 'cylinder', r: 0.44, h: 0.99, color: 0x5a4630 } },
-  vase:       { url: '/assets/models/vase.glb',        scale: 1, rotY: 0,
+  vase:       { url: '/assets/models/vase.glb',        scale: 1, rotY: 0, fit: { height: 1.53 },
                 placeholder: { type: 'cylinder', r: 0.5, h: 1.53, color: 0x6d5a48 } },
-  well:       { url: '/assets/models/well.glb',        scale: 1, rotY: 0,
+  well:       { url: '/assets/models/well.glb',        scale: 1, rotY: 0, fit: { height: 2.35 },
                 placeholder: { type: 'cylinder', r: 1.05, h: 2.35, color: 0x555049 } },
 
   // --- 캐릭터 (팀원 + 적 봇이 같은 모델을 쓰고 색만 바꾼다) ---
-  character:  { url: '/assets/models/character.glb',   scale: 1, rotY: 0,
+  character:  { url: '/assets/models/character.glb',   scale: 1, rotY: 0, fit: { height: 1.8 },
                 placeholder: { type: 'humanoid', h: 1.8, color: 0x7f8a74 } },
 
   // --- 총기 (1인칭 뷰모델 + 다른 플레이어 손에 들리는 모델) ---
-  rifle:      { url: '/assets/models/weapon-rifle.glb',  scale: 1, rotY: 0,
+  rifle:      { url: '/assets/models/weapon-rifle.glb',  scale: 1, rotY: 0, rotation: [0, Math.PI, 0], fit: { length: 0.9, center: true },
                 placeholder: { type: 'gun', len: 0.9, color: 0x2b2b2e } },
-  smg:        { url: '/assets/models/weapon-smg.glb',    scale: 1, rotY: 0,
+  smg:        { url: '/assets/models/weapon-smg.glb',    scale: 1, rotY: 0, rotation: [0, Math.PI, 0], fit: { length: 0.65, center: true },
                 placeholder: { type: 'gun', len: 0.65, color: 0x2b2b2e } },
-  sniper:     { url: '/assets/models/weapon-sniper.glb', scale: 1, rotY: 0,
+  sniper:     { url: '/assets/models/weapon-sniper.glb', scale: 1, rotY: 0, rotation: [0, Math.PI, 0], fit: { length: 1.2, center: true },
                 placeholder: { type: 'gun', len: 1.2, color: 0x2b2b2e } },
 };
 
@@ -53,8 +53,8 @@ export const MODELS = {
  *  scale    : 크기
  *  adsPos   : 정조준(ADS) 했을 때 위치 - 보통 화면 중앙으로 당긴다
  * -------------------------------------------------------------------------- */
-/*  ※ 아래 값은 현재의 임시 총 모델(placeholder) 기준으로 맞춰져 있다.
- *    진짜 GLB 를 public/assets/models/ 에 넣으면 크기가 달라지므로 다시 맞춰야 한다.
+/*  ※ 아래 값은 정규화한 첨부 총 모델 기준이다.
+ *    다른 모델로 교체할 경우 MODELS의 fit과 방향을 먼저 확인한다.
  *
  *    총은 로컬 +X 축을 향해 만들어져 있고 rot 의 Y=π/2 가 그걸 화면 앞(-Z)으로 돌린다.
  *    그래서 pos 의 z 를 충분히 앞(-)으로 두지 않으면 개머리판이 카메라 뒤로 넘어가
@@ -83,7 +83,7 @@ export const QUALITY = {
     shadows: false,
     shadowMapSize: 512,
     drawDistance: 24,
-    fogDensity: 0.070,
+    fogDensity: 0.030,
     anisotropy: 1,
     pointLights: 3,        // 천장 전구를 몇 개까지 켤지
     antialias: false,
@@ -95,19 +95,19 @@ export const QUALITY = {
     shadows: true,
     shadowMapSize: 1024,
     drawDistance: 32,
-    fogDensity: 0.050,
+    fogDensity: 0.023,
     anisotropy: 2,
     pointLights: 5,
     antialias: false,
     shadowRadius: 2,
   },
   high: {
-    label: '높음 (iPhone 13 Pro 기본)',
+    label: '높음',
     pixelRatio: 1.5,       // 13 Pro 의 DPR 은 3 이지만 1.5 면 충분히 선명하고 2배 빠르다
     shadows: true,
     shadowMapSize: 2048,
     drawDistance: 45,
-    fogDensity: 0.038,
+    fogDensity: 0.018,
     anisotropy: 4,
     pointLights: 8,
     antialias: false,      // 모바일에서는 MSAA 대신 해상도 스케일이 더 효율적
@@ -117,9 +117,9 @@ export const QUALITY = {
     label: '최고 (PC 전용)',
     pixelRatio: 2.0,
     shadows: true,
-    shadowMapSize: 4096,
+    shadowMapSize: 2048,
     drawDistance: 70,
-    fogDensity: 0.028,
+    fogDensity: 0.014,
     anisotropy: 8,
     pointLights: 8,
     antialias: true,
