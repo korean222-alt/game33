@@ -44,6 +44,7 @@ import { scoreMission, gradeAdvice } from './public/js/scoring.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
+const STARTED_AT = Date.now();
 
 /* ========================================================================== *
  *  튜닝 상수
@@ -1166,7 +1167,21 @@ app.use(express.static(path.join(__dirname, 'public'), {
 // three.js 를 CDN 없이 로컬에서 서빙 (오프라인/기내에서도 동작)
 app.use('/vendor/three', express.static(path.join(__dirname, 'node_modules/three')));
 
-app.get('/health', (_req, res) => res.json({ ok: true, rooms: rooms.size, protocol: GAME_PROTOCOL }));
+/*
+ * 상태 확인.
+ *
+ * 예전에 화면(Vercel)과 게임 서버(Render)가 서로 다른 커밋으로 떠 있어서
+ * 시작 위치와 문 이벤트가 어긋난 적이 있다. 그때 무엇이 떠 있는지 알 방법이
+ * /health 에 없었다. Render 가 넣어 주는 커밋/브랜치를 같이 돌려준다.
+ */
+app.get('/health', (_req, res) => res.json({
+  ok: true,
+  rooms: rooms.size,
+  protocol: GAME_PROTOCOL,
+  commit: (process.env.RENDER_GIT_COMMIT || '').slice(0, 7) || 'local',
+  branch: process.env.RENDER_GIT_BRANCH || 'local',
+  startedAt: new Date(STARTED_AT).toISOString(),
+}));
 
 io.on('connection', (socket) => {
   socket.on('protocol', (_payload, cb) => cb?.({ protocol: GAME_PROTOCOL }));

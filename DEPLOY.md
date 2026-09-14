@@ -22,7 +22,17 @@
 1. Render 대시보드 → **New → Blueprint** → 이 저장소 연결
 2. 저장소 루트의 `render.yaml` 이 자동으로 읽힌다 (`npm install` → `npm start`, 헬스체크 `/health`)
 3. 배포가 끝나면 주소를 받는다. 예: `https://market-raid.onrender.com`
-4. 브라우저로 `https://<주소>/health` 를 열어 `{"ok":true,...}` 가 나오는지 확인
+4. 브라우저로 `https://<주소>/health` 를 열어 확인한다:
+
+```json
+{ "ok": true, "rooms": 0, "protocol": "ravenwood-entry-1",
+  "commit": "1c979d2", "branch": "main", "startedAt": "..." }
+```
+
+`commit` 과 `branch` 가 **지금 main 의 최신 커밋과 같아야** 화면(Vercel)과
+게임 서버가 같은 버전이다. 예전에 이 둘이 어긋나서 시작 위치와 문 이벤트가
+전부 이상해진 적이 있는데, 그때는 무엇이 떠 있는지 알 방법이 없었다.
+다르면 Render 대시보드에서 **Manual Deploy → Deploy latest commit** 을 누른다.
 
 > **free 플랜 주의**: 15분간 접속이 없으면 슬립 상태가 되고 그때 열려 있던 WebSocket
 > 연결이 끊긴다. 다시 깨어나는 데 약 1분 걸린다. 친구들끼리 가끔 접속하는 용도로는
