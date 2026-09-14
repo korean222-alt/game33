@@ -21,6 +21,8 @@ import {
   resolveCircle, hasLineOfSight, rayObstacleDistance, segmentHitsBox, findRoute,
 } from './public/js/map-data.js';
 
+import { traceShot, TargetHistory } from './public/js/shot-trace.js';
+
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.PORT || 3000;
 
@@ -83,7 +85,9 @@ class Room {
     this.code = code;
     this.players = new Map();   // socketId -> player
     this.bots = [];
-    this.state = 'lobby';       // lobby | active | won | lost
+    this.state = 'lobby';       // lobby | briefing | active | won | lost
+    this.briefingId = 0;
+    this.targetHistory = new TargetHistory();
     this.hostId = null;
     this.botCount = 4;
     this.difficulty = 'normal'; // easy | normal | hard
@@ -117,7 +121,7 @@ class Room {
       reloadUntil: 0,
       lastShot: 0,
       moving: 0, sprint: 0, crouch: 0,
-      inputSeq: 0,
+      inputSeq: 0, shotSeq: 0, briefingReady: false,
       defusing: null,
       kills: 0,
       ping: 0,
@@ -139,8 +143,9 @@ class Room {
       hostId: this.hostId,
       botCount: this.botCount,
       difficulty: this.difficulty,
+      briefingId: this.briefingId,
       players: [...this.players.values()].map((p) => ({
-        id: p.id, name: p.name, slot: p.slot, ready: p.ready, weapon: p.weapon,
+        id: p.id, name: p.name, slot: p.slot, ready: p.ready, weapon: p.weapon, briefingReady: p.briefingReady,
       })),
     };
   }
@@ -393,50 +398,62 @@ function damageBot(room, bot, dmg, byId, io) {
 /* ========================================================================== *
  *  사격 판정 (서버 권위)
  * ========================================================================== */
-function resolveShot(room, shooter, origin, dir, io) {
+function resolveShot(room, shooter, origin, dir, io, viewTime) {
   const w = WEAPONS[shooter.weapon];
-  const len = Math.hypot(dir.x, dir.y, dir.z) || 1;
-  const d = { x: dir.x / len, y: dir.y / len, z: dir.z / len };
-
-  // 수평 성분 (벽 판정은 2D 로)
-  const wallDist = rayObstacleDistance(origin, d, w.range);
-
-  let best = null;
-  let bestT = Math.min(w.range, wallDist);
-
-  const testSphere = (cx, cy, cz, r, meta) => {
-    const ox = origin.x - cx, oy = origin.y - cy, oz = origin.z - cz;
-    const b = ox * d.x + oy * d.y + oz * d.z;
-    const c = ox * ox + oy * oy + oz * oz - r * r;
-    const disc = b * b - c;
-    if (disc < 0) return;
-    const t = -b - Math.sqrt(disc);
-    if (t > 0.2 && t < bestT) { bestT = t; best = { t, ...meta }; }
-  };
-
-  for (const bot of room.bots) {
-    if (!bot.alive) continue;
-    testSphere(bot.x, 1.05, bot.z, 0.42, { type: 'bot', ref: bot, part: 'body' });   // 몸통
-    testSphere(bot.x, 1.63, bot.z, 0.20, { type: 'bot', ref: bot, part: 'head' });   // 머리
+  const targets = room.targetHistory.sample(viewTime, now(), room.bots);
+  const hit = traceShot(origin, dir, w.range, targets, rayObstacleDistance);
+  if (hit.hit) {
+    const bot = room.bots.find(b => b.id === hit.targetId);
+    const damage = Math.round(w.damage * (hit.part === 'head' ? w.headMul : 1));
+    damageBot(room, bot, damage, shooter.id, io);
+    hit.targetHp = Math.max(0, bot.hp);
   }
-
-  if (!best) {
-    return { hit: false, dist: Math.min(bestT, w.range) };
-  }
-
-  const dmg = Math.round(w.damage * (best.part === 'head' ? w.headMul : 1));
-  damageBot(room, best.ref, dmg, shooter.id, io);
-  return { hit: true, dist: best.t, part: best.part, targetId: best.ref.id };
+  return hit;
 }
 
 /* ========================================================================== *
  *  미션 (폭발물 해체)
  * ========================================================================== */
+function applyPlayerInput(me, d) {
+    if (!d || !['x', 'y', 'z', 'yaw', 'pitch'].every(k => Number.isFinite(d[k]))) return;
+    if (d.seq !== undefined &&
+        (!Number.isSafeInteger(d.seq) || d.seq <= me.inputSeq)) return;
+    // 위치는 클라 예측을 신뢰하되 서버에서 한 번 더 충돌 보정 (벽 뚫기 방지)
+    const height = d.crouch ? 1.3 : 1.8;
+    me.y = clamp(d.y, 0, MAP.height - height);
+    const fixed = resolveCircle(d.x, d.z, PLAYER_RADIUS, COLLIDERS, me.y, height);
+    me.x = fixed.x;
+    me.z = fixed.z;
+    me.yaw = +d.yaw || 0;
+    me.pitch = clamp(+d.pitch || 0, -1.5, 1.5);
+    me.moving = d.moving ? 1 : 0;
+    me.sprint = d.sprint ? 1 : 0;
+    me.crouch = d.crouch ? 1 : 0;
+    if (d.seq !== undefined) me.inputSeq = d.seq;
+}
+
+function beginBriefing(room, io) {
+  room.state = 'briefing';
+  room.briefingId++;
+  for (const p of room.players.values()) p.briefingReady = false;
+  io.to(room.code).emit('briefing', { id: room.briefingId });
+  io.to(room.code).emit('lobby', room.lobbyState());
+}
+
+function cancelBriefing(room, io) {
+  if (room.state !== 'briefing') return;
+  room.state = 'lobby';
+  for (const p of room.players.values()) { p.ready = false; p.briefingReady = false; }
+  io.to(room.code).emit('briefingCancelled');
+}
+
 function startMatch(room, io) {
   room.state = 'active';
   room.endsAt = now() + MISSION_TIME_MS;
   room.sites = BOMB_SITES.map((s) => ({ ...s, progress: 0, defused: false, activeBy: [] }));
   spawnBots(room);
+  room.targetHistory = new TargetHistory();
+  room.targetHistory.record(now(), room.bots);
 
   let i = 0;
   for (const p of room.players.values()) {
@@ -447,7 +464,8 @@ function startMatch(room, io) {
     p.reserve = WEAPONS[p.weapon].reserve;
     p.reloadUntil = 0; p.defusing = null;
     p.lastShot = 0; p.moving = p.sprint = p.crouch = 0;
-    p.inputSeq = 0;
+    p.inputSeq = p.shotSeq = 0;
+    p.shotCredit = 1; p.creditTime = now();
     i++;
   }
 
@@ -461,6 +479,7 @@ function startMatch(room, io) {
       x: p.x, z: p.z, yaw: p.yaw,
     })),
     weapons: WEAPONS,
+    shotProtocol: 1,
   });
 
   if (room.timer) clearInterval(room.timer);
@@ -538,6 +557,7 @@ function tickRoom(room, io) {
   if (room.state !== 'active') return;
 
   updateBots(room, dt, io);
+  room.targetHistory.record(t, room.bots);
   updateObjectives(room, dt, io);
 
   // 재장전 완료 처리
@@ -565,7 +585,7 @@ function tickRoom(room, io) {
       hp: p.hp, alive: p.alive, moving: p.moving, sprint: p.sprint, crouch: p.crouch,
       ammo: p.ammo, reserve: p.reserve, reloading: p.reloadUntil > 0 ? 1 : 0,
       defusing: p.defusing ? 1 : 0,
-      inputSeq: p.inputSeq,
+      inputSeq: p.inputSeq, shotSeq: p.shotSeq,
     })),
     bots: room.bots.map((b) => ({
       id: b.id, x: +b.x.toFixed(3), z: +b.z.toFixed(3), yaw: +b.yaw.toFixed(3),
@@ -593,6 +613,7 @@ io.on('connection', (socket) => {
 
   const leave = () => {
     if (!room) return;
+    cancelBriefing(room, io);
     room.removePlayer(socket.id);
     socket.leave(room.code);
     io.to(room.code).emit('lobby', room.lobbyState());
@@ -624,7 +645,7 @@ io.on('connection', (socket) => {
     const r = rooms.get(key);
     if (!r) return cb?.({ ok: false, error: '그런 방 코드가 없어요.' });
     if (r.players.size >= 4) return cb?.({ ok: false, error: '방이 꽉 찼어요 (최대 4명).' });
-    if (r.state === 'active') return cb?.({ ok: false, error: '이미 작전이 진행 중이에요.' });
+    if (r.state === 'active' || r.state === 'briefing') return cb?.({ ok: false, error: '이미 작전이 진행 중이에요.' });
     if (room === r) return cb?.({ ok: true, you: me.id, lobby: room.lobbyState() });
     leave();
     room = r;
@@ -635,7 +656,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('setLoadout', ({ weapon, ready } = {}) => {
-    if (!me || room.state === 'active') return;
+    if (!me || room.state === 'active' || room.state === 'briefing') return;
     if (weapon && WEAPONS[weapon]) {
       me.weapon = weapon;
       me.ammo = WEAPONS[weapon].mag;
@@ -646,7 +667,7 @@ io.on('connection', (socket) => {
   });
 
   socket.on('setRoomConfig', ({ botCount, difficulty } = {}) => {
-    if (!room || room.hostId !== socket.id || room.state === 'active') return;
+    if (!room || room.hostId !== socket.id || room.state === 'active' || room.state === 'briefing') return;
     if (botCount) room.botCount = clamp(botCount | 0, 2, 5);
     if (difficulty && DIFFICULTY[difficulty]) room.difficulty = difficulty;
     io.to(room.code).emit('lobby', room.lobbyState());
@@ -654,56 +675,60 @@ io.on('connection', (socket) => {
 
   socket.on('startMatch', () => {
     if (!room || room.hostId !== socket.id) return;
-    if (room.state === 'active') return;
+    if (room.state === 'active' || room.state === 'briefing') return;
     if (![...room.players.values()].every(p => p.ready)) return;
-    startMatch(room, io);
+    beginBriefing(room, io);
+  });
+
+  socket.on('briefingReady', ({ id } = {}) => {
+    if (!room || !me || room.state !== 'briefing' || id !== room.briefingId) return;
+    me.briefingReady = true;
+    io.to(room.code).emit('lobby', room.lobbyState());
+    if ([...room.players.values()].every(p => p.briefingReady)) startMatch(room, io);
+  });
+
+  socket.on('cancelBriefing', () => {
+    if (!room || room.hostId !== socket.id || room.state !== 'briefing') return;
+    cancelBriefing(room, io);
+    io.to(room.code).emit('lobby', room.lobbyState());
   });
 
   /* ---- 인게임 ---------------------------------------------------------- */
   socket.on('input', (d) => {
     if (!me || !room || room.state !== 'active' || !me.alive) return;
-    if (!d || !['x', 'y', 'z', 'yaw', 'pitch'].every(k => Number.isFinite(d[k]))) return;
-    if (d.seq !== undefined &&
-        (!Number.isSafeInteger(d.seq) || d.seq <= me.inputSeq)) return;
-    // 위치는 클라 예측을 신뢰하되 서버에서 한 번 더 충돌 보정 (벽 뚫기 방지)
-    const height = d.crouch ? 1.3 : 1.8;
-    me.y = clamp(d.y, 0, MAP.height - height);
-    const fixed = resolveCircle(d.x, d.z, PLAYER_RADIUS, COLLIDERS, me.y, height);
-    me.x = fixed.x;
-    me.z = fixed.z;
-    me.yaw = +d.yaw || 0;
-    me.pitch = clamp(+d.pitch || 0, -1.5, 1.5);
-    me.moving = d.moving ? 1 : 0;
-    me.sprint = d.sprint ? 1 : 0;
-    me.crouch = d.crouch ? 1 : 0;
-    if (d.seq !== undefined) me.inputSeq = d.seq;
+    applyPlayerInput(me, d);
   });
 
   socket.on('shoot', (d, cb) => {
     if (!me || !room || room.state !== 'active' || !me.alive) return cb?.({ ok: false });
-    if (!d || !['dx', 'dy', 'dz'].every(k => Number.isFinite(d[k]))) return cb?.({ ok: false });
+    const reply = result => cb?.({ ammo: me.ammo, shotSeq: me.shotSeq, ...result });
+    if (d?.shotId !== undefined) {
+      if (!Number.isSafeInteger(d.shotId) || d.shotId <= me.shotSeq) return reply({ ok: false, reason: 'stale' });
+      me.shotSeq = d.shotId;
+    }
+    if (!d || !['dx', 'dy', 'dz'].every(k => Number.isFinite(d[k]))) return reply({ ok: false });
     const length = Math.hypot(d.dx, d.dy, d.dz);
-    if (length < .00001) return cb?.({ ok: false });
-    const w = WEAPONS[me.weapon];
-    const t = now();
-    if (me.reloadUntil > 0) return cb?.({ ok: false, reason: 'reloading' });
-    if (me.ammo <= 0) return cb?.({ ok: false, reason: 'empty' });
-    if (t - me.lastShot < (60000 / w.rpm) * 0.85) return cb?.({ ok: false, reason: 'rate' });
-
+    if (length < .00001) return reply({ ok: false });
+    const w = WEAPONS[me.weapon], t = now();
+    if (me.reloadUntil > 0) return reply({ ok: false, reason: 'reloading' });
+    if (me.ammo <= 0) return reply({ ok: false, reason: 'empty' });
+    // A small credit bucket tolerates packets arriving together without increasing sustained RPM.
+    me.shotCredit = Math.min(3, (me.shotCredit ?? 1) + (t - (me.creditTime ?? t)) / (60000 / w.rpm));
+    me.creditTime = t;
+    if (me.shotCredit < 1) return reply({ ok: false, reason: 'rate' });
+    me.shotCredit--;
+    if (d.input) applyPlayerInput(me, d.input);
     me.lastShot = t;
     me.ammo--;
-
     const origin = { x: me.x, y: me.y + PLAYER_EYE - (me.crouch ? 0.45 : 0), z: me.z };
     const dir = { x: d.dx / length, y: d.dy / length, z: d.dz / length };
-    const res = resolveShot(room, me, origin, dir, io);
-
+    const res = resolveShot(room, me, origin, dir, io, d.viewTime);
     io.to(room.code).emit('playerShot', {
       id: me.id, x: origin.x, y: origin.y, z: origin.z,
       dx: dir.x, dy: dir.y, dz: dir.z, dist: res.dist, hit: res.hit,
     });
     alertNearbyBots(room, me.x, me.z, me.id);
-
-    cb?.({ ok: true, ammo: me.ammo, ...res });
+    reply({ ok: true, ...res });
   });
 
   socket.on('reload', () => {

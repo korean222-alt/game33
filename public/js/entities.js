@@ -64,6 +64,9 @@ class Avatar {
     this.isBot = isBot;
     this.buffer = new InterpBuffer();
     this.alive = true;
+    this.confirmedDead = false;
+    this.latestHp = 100;
+    this.predictedDamage = 0;
 
     this.group = new THREE.Group();
 
@@ -141,6 +144,8 @@ class Avatar {
       this.alive = alive;
       this.group.visible = alive;
     }
+
+    this.group.visible = alive && !this.confirmedDead && this.latestHp - this.predictedDamage > 0;
 
     // 이름표는 항상 카메라를 본다
     if (this.nameTag.visible) this.nameTag.quaternion.copy(camera.quaternion);
@@ -224,9 +229,11 @@ export class Entities {
   spawnBots(list) {
     for (const b of list) {
       if (this.bots.has(b.id)) continue;
-      this.bots.set(b.id, new Avatar(this.scene, this.assets, {
-        color: BOT_COLOR, name: '적', isBot: true,
-      }));
+      const avatar = new Avatar(this.scene, this.assets, { color: BOT_COLOR, name: '적', isBot: true });
+      avatar.latestHp = b.hp ?? b.maxHp ?? 100;
+      avatar.group.position.set(b.x ?? 0, 0, b.z ?? 0);
+      avatar.push(performance.now(), { ...b, x: b.x ?? 0, z: b.z ?? 0, y: 0, yaw: b.yaw ?? 0, alive: true });
+      this.bots.set(b.id, avatar);
     }
   }
 
@@ -238,8 +245,36 @@ export class Entities {
       this.players.get(p.id)?.push(t, p);
     }
     for (const b of snap.bots) {
-      this.bots.get(b.id)?.push(t, { ...b, y: 0 });
+      const avatar = this.bots.get(b.id);
+      if (avatar) {
+        if (Number.isFinite(b.hp)) avatar.latestHp = b.hp;
+        if (!b.alive) avatar.confirmedDead = true;
+        avatar.push(t, { ...b, y: 0 });
+      }
     }
+  }
+
+  shotTargets() {
+    return [...this.bots].map(([id, avatar]) => ({
+      id, x: avatar.group.position.x, y: avatar.group.position.y, z: avatar.group.position.z,
+      alive: avatar.group.visible && !avatar.confirmedDead,
+    }));
+  }
+
+  applyShotPredictions(pending) {
+    for (const [id, avatar] of this.bots) {
+      avatar.predictedDamage = pending.reduce((sum, shot) =>
+        sum + (shot.prediction?.targetId === id ? shot.prediction.damage : 0), 0);
+      avatar.group.visible = avatar.alive && !avatar.confirmedDead &&
+        avatar.latestHp - avatar.predictedDamage > 0;
+    }
+  }
+
+  confirmBotHealth(id, hp) {
+    const avatar = this.bots.get(id);
+    if (!avatar || !Number.isFinite(hp)) return;
+    avatar.latestHp = hp;
+    if (hp <= 0) { avatar.confirmedDead = true; avatar.group.visible = false; }
   }
 
   removePlayer(id) {

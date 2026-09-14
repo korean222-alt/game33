@@ -1,3 +1,5 @@
+import { MISSION } from './mission-story.js';
+
 /* =============================================================================
  *  hud.js  -  화면(메뉴/로비/결과) 전환과 HUD 갱신
  *
@@ -25,10 +27,11 @@ export class Hud {
 
   /* ---- 화면 전환 -------------------------------------------------------- */
   show(name) {
-    for (const id of ['menu', 'lobby', 'loading', 'result']) {
+    for (const id of ['menu', 'lobby', 'loading', 'briefing', 'result']) {
       $(id).classList.toggle('hidden', id !== name);
     }
     const inGame = name === null;
+    if (!inGame) this.setAim(0, '', false);
     this.el.hud.classList.toggle('hidden', !inGame);
   }
 
@@ -97,9 +100,10 @@ export class Hud {
 
   /** 명중 시 조준점 붉게 (히트마커) */
   flashHit() {
+    $('hitMarker').classList.add('active');
     this.el.crosshair.classList.add('hit');
     clearTimeout(this._hitTimer);
-    this._hitTimer = setTimeout(() => this.el.crosshair.classList.remove('hit'), 110);
+    this._hitTimer = setTimeout(() => { this.el.crosshair.classList.remove('hit'); $('hitMarker').classList.remove('active'); }, 110);
   }
 
   banner(text, ms = 1600) {
@@ -107,6 +111,18 @@ export class Hud {
     this.el.banner.style.opacity = '1';
     clearTimeout(this._bannerTimer);
     this._bannerTimer = setTimeout(() => { this.el.banner.style.opacity = '0'; }, ms);
+  }
+
+  radio(text) {
+    $('radioText').textContent = text;
+    $('radio').classList.remove('hidden');
+    clearTimeout(this._radioTimer);
+    this._radioTimer = setTimeout(() => $('radio').classList.add('hidden'), 7000);
+  }
+
+  setAim(amount, weapon, alive = true) {
+    this.el.crosshair.style.opacity = alive ? String(1 - amount) : '0';
+    $('scope').classList.toggle('hidden', !alive || weapon !== 'sniper' || amount < .95);
   }
 
   killfeed(text) {
@@ -136,6 +152,7 @@ export class Hud {
     $('resTitle').textContent = won ? '작전 성공' : '작전 실패';
     $('resTitle').className = 'big ' + (won ? 'won' : 'lost');
     $('resWhy').textContent = data.reason || '';
+    $('resStory').textContent = won ? MISSION.won : MISSION.lost;
 
     const ul = $('resStats');
     ul.innerHTML = '';
@@ -153,6 +170,9 @@ export class Hud {
   /** 매치 종료/재시작 시 HUD 초기화 */
   resetForNewMatch() {
     this.setDead(false);
+    this.setAim(0, '');
+    clearTimeout(this._radioTimer);
+    $('radio').classList.add('hidden');
     this.setDefuse(false);
     this.el.killfeed.innerHTML = '';
     this.el.banner.style.opacity = '0';

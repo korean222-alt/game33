@@ -8,6 +8,8 @@ import { Game } from './game.js';
 import { isTouchDevice } from './input.js';
 import { loadSettings, saveSettings, guessQuality } from './config.js';
 
+import { MISSION } from './mission-story.js';
+
 const $ = (id) => document.getElementById(id);
 
 const state = {
@@ -18,6 +20,7 @@ const state = {
   lobby: null,
   weapon: 'rifle',
   ready: false,
+  briefing: null,
 };
 
 /* ========================================================================== *
@@ -131,6 +134,21 @@ async function ensureGame() {
  * ========================================================================== */
 function wireLobbyEvents() {
   state.socket.on('lobby', (l) => applyLobby(l));
+  state.socket.on('briefing', (data) => {
+    state.briefing = { id: data.id, page: 0, confirmed: false };
+    state.game?.input.disable();
+    state.game?.stop();
+    state.hud.showTouch(false);
+    renderBriefing();
+    state.hud.show('briefing');
+    $('briefTitle').focus();
+  });
+  state.socket.on('briefingCancelled', () => {
+    state.briefing = null;
+    state.hud.show('lobby');
+    $('lobbyErr').textContent = '브리핑이 취소되었습니다. 준비 상태를 다시 확인해 주세요.';
+  });
+  state.socket.on('matchStart', () => { state.briefing = null; });
 
   state.socket.on('disconnect', () => {
     state.game?.dispose();
@@ -138,6 +156,7 @@ function wireLobbyEvents() {
     state.socket?.disconnect();
     state.socket = null;
     state.ready = false;
+    state.briefing = null;
     state.hud.showTouch(false);
     state.hud.show('menu');
     setMenuErr('서버와 연결이 끊겼습니다. 방을 다시 만들거나 참가해 주세요.');
@@ -182,10 +201,58 @@ function applyLobby(l) {
   const others = l.players.length;
   const allReady = l.players.every((p) => p.ready);
   $('btnStart').disabled = !(isHost && others >= 1 && allReady);
-  $('btnStart').textContent = allReady ? '작전 개시' : '전원 준비 대기 중';
+  $('btnStart').textContent = allReady ? '작전 브리핑 시작' : '전원 준비 대기 중';
+  if (state.briefing) updateBriefingStatus();
+}
+
+function updateBriefingStatus() {
+  const players = state.lobby?.players || [];
+  const ready = players.filter(p => p.briefingReady).length;
+  $('briefStatus').textContent = state.briefing?.confirmed ?
+    `진입 준비 ${ready} / ${players.length} · 나머지 대원의 확인을 기다리고 있습니다.` :
+    '보고를 확인한 뒤 진입 준비를 눌러 주세요.';
+  $('briefCancel').classList.toggle('hidden', state.lobby?.hostId !== state.myId);
+}
+
+function renderBriefing() {
+  const briefing = state.briefing;
+  if (!briefing) return;
+  const page = MISSION.pages[briefing.page];
+  $('missionTitle').textContent = MISSION.title;
+  $('missionLocation').textContent = MISSION.location;
+  $('missionTime').textContent = MISSION.time;
+  $('briefStep').textContent = page.label;
+  $('briefTitle').textContent = page.title;
+  $('briefBody').textContent = page.body;
+  $('briefDetail').textContent = page.detail;
+  $('briefBack').disabled = briefing.page === 0 || briefing.confirmed;
+  $('briefNext').disabled = briefing.confirmed;
+  $('briefNext').textContent = briefing.confirmed ? '진입 준비 완료' :
+    briefing.page === MISSION.pages.length - 1 ? '브리핑 확인 · 진입 준비' : '다음 보고';
+  updateBriefingStatus();
 }
 
 function initLobby() {
+  $('briefBack').addEventListener('click', () => {
+    if (!state.briefing || state.briefing.confirmed) return;
+    state.briefing.page = Math.max(0, state.briefing.page - 1);
+    renderBriefing();
+  });
+  $('briefNext').addEventListener('click', () => {
+    const briefing = state.briefing;
+    if (!briefing || briefing.confirmed || !state.socket?.connected) return;
+    if (briefing.page < MISSION.pages.length - 1) { briefing.page++; renderBriefing(); return; }
+    briefing.confirmed = true;
+    renderBriefing();
+    state.socket.emit('briefingReady', { id: briefing.id });
+  });
+  $('briefCancel').addEventListener('click', () => state.socket?.emit('cancelBriefing'));
+  $('briefLeave').addEventListener('click', () => {
+    state.socket?.emit('leaveRoom');
+    state.briefing = null; state.ready = false;
+    state.hud.show('menu');
+  });
+
   $('btnReady').addEventListener('click', () => {
     state.ready = !state.ready;
     $('btnReady').textContent = state.ready ? '준비 완료' : '준비';

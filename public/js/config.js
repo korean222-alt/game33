@@ -45,8 +45,7 @@ export const MODELS = {
 /* -----------------------------------------------------------------------------
  *  2. 1인칭 총 위치 (★ 총이 이상하게 보이면 여기를 만진다)
  *
- *  게임 안에서 키보드 V (PC) 를 누르면 슬라이더가 나와서 실시간으로 맞출 수 있고,
- *  "값 복사" 버튼을 누르면 아래에 그대로 붙여넣을 수 있는 숫자가 복사된다.
+ *  조준 위치는 실제 조준경 중심에서 계산한다.
  *
  *  pos      : 카메라 기준 위치 [오른쪽, 위, 앞(-가 앞)]
  *  rot      : 회전 [X, Y, Z] (라디안)
@@ -60,12 +59,12 @@ export const MODELS = {
  *    그래서 pos 의 z 를 충분히 앞(-)으로 두지 않으면 개머리판이 카메라 뒤로 넘어가
  *    화면을 가로지르는 이상한 막대처럼 보인다. 총이 길수록 z 를 더 앞으로 밀어야 한다. */
 export const VIEWMODEL = {
-  rifle:  { pos: [0.16, -0.14, -0.37], rot: [0, Math.PI / 2, 0], scale: 0.50,
-            adsPos: [0.0, -0.090, -0.34], adsRot: [0, Math.PI / 2, 0] },
-  smg:    { pos: [0.15, -0.13, -0.30], rot: [0, Math.PI / 2, 0], scale: 0.50,
-            adsPos: [0.0, -0.085, -0.28], adsRot: [0, Math.PI / 2, 0] },
-  sniper: { pos: [0.18, -0.15, -0.46], rot: [0, Math.PI / 2, 0], scale: 0.50,
-            adsPos: [0.0, -0.080, -0.44], adsRot: [0, Math.PI / 2, 0] },
+  rifle:  { pos: [0.22, -0.20, -0.55], rot: [0, Math.PI / 2, 0], scale: .90,
+            sightDistance: .38 },
+  smg:    { pos: [0.20, -0.22, -0.45], rot: [0, Math.PI / 2, 0], scale: 1.0,
+            sightDistance: .30 },
+  sniper: { pos: [0.24, -0.20, -0.72], rot: [0, Math.PI / 2, 0], scale: .90,
+            sightDistance: .48, scopeFov: 28 },
 };
 /*  총이 뒤를 보고 있으면 rot 의 Y 값을 -Math.PI/2 로 바꾸고,
  *  총이 뒤집혀 있으면 rot 의 Z 값에 Math.PI 를 넣으면 된다.            */

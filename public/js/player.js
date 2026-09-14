@@ -12,6 +12,9 @@ import { moveBody, COLLIDERS, overlaps, resolveCircle } from './map-data.js';
 
 import { PredictionHistory } from './prediction-history.js';
 
+import { createWeaponOptic, disposeOptic } from './weapon-optic.js';
+import { sightPosition } from './viewmodel-layout.js';
+
 export class LocalPlayer {
   constructor(camera, scene, assets, settings) {
     this.camera = camera;
@@ -65,6 +68,8 @@ export class LocalPlayer {
 
   setWeapon(key) {
     this.weapon = key;
+    disposeOptic(this._optic);
+    this._optic = null;
     // 이전 뷰모델 정리
     while (this._vmGroup.children.length) this._vmGroup.remove(this._vmGroup.children[0]);
     try {
@@ -73,6 +78,9 @@ export class LocalPlayer {
       this.viewmodel = null;
       return;
     }
+    const { optic, anchor } = createWeaponOptic(this.viewmodel, key);
+    this._optic = optic;
+    this._sightAnchor = anchor;
     // 1인칭 총은 벽에 파묻히면 안 되므로 항상 맨 위에 그린다
     this.viewmodel.traverse((o) => {
       if (!o.isMesh) return;
@@ -207,7 +215,8 @@ export class LocalPlayer {
     this.camera.rotation.x = this.pitch + this.recoil.y;
 
     // 조준하면 화각을 좁혀 확대 효과
-    const fov = lerp(this.settings.fov, this.settings.adsFov, this.adsAmount);
+    const adsFov = VIEWMODEL[this.weapon]?.scopeFov ?? this.settings.adsFov;
+    const fov = lerp(this.settings.fov, adsFov, this.adsAmount);
     if (Math.abs(this.camera.fov - fov) > 0.01) {
       this.camera.fov = fov;
       this.camera.updateProjectionMatrix();
@@ -219,9 +228,11 @@ export class LocalPlayer {
     if (!this.viewmodel) return;
     const vm = VIEWMODEL[this.weapon] || VIEWMODEL.rifle;
 
-    const p = vm.pos, ap = vm.adsPos || p;
-    const r = vm.rot, ar = vm.adsRot || r;
+    const p = vm.pos;
+    const ap = sightPosition(this._sightAnchor, vm.scale, vm.sightDistance);
+    const r = vm.rot, ar = [0, Math.PI / 2, 0];
     const a = this.adsAmount;
+    this.viewmodel.visible = this.weapon !== 'sniper' || a < .95;
 
     // 달릴 때는 총을 내린다
     const sprintDrop = this.sprinting ? 1 : 0;
@@ -232,13 +243,13 @@ export class LocalPlayer {
 
     this.viewmodel.position.set(
       lerp(p[0], ap[0], a) + sway,
-      lerp(p[1], ap[1], a) - this._sprintK * 0.10 + Math.sin(this.bobPhase * 2) * 0.004 * (1 - a),
+      lerp(p[1], ap[1], a) - this._sprintK * 0.10 * (1 - a) + Math.sin(this.bobPhase * 2) * 0.004 * (1 - a),
       lerp(p[2], ap[2], a),
     );
     this.viewmodel.rotation.set(
-      lerp(r[0], ar[0], a) + this._sprintK * 0.35,
+      lerp(r[0], ar[0], a) + this._sprintK * 0.35 * (1 - a),
       lerp(r[1], ar[1], a),
-      lerp(r[2], ar[2], a) + this._sprintK * 0.30,
+      lerp(r[2], ar[2], a) + this._sprintK * 0.30 * (1 - a),
     );
     const sc = vm.scale ?? 1;
     this.viewmodel.scale.setScalar(sc);
@@ -246,7 +257,10 @@ export class LocalPlayer {
     if (this.muzzle) {
       const on = performance.now() < this.muzzleUntil;
       this.muzzle.intensity = on ? 9 : 0;
-      this.muzzle.position.set(0.1, -0.05, -0.7);
+      this.viewmodel.updateMatrixWorld(true);
+      const length = this.weapon === 'sniper' ? 1.2 : this.weapon === 'smg' ? .65 : .9;
+      const muzzle = this.viewmodel.localToWorld(new THREE.Vector3(length / 2, .05, 0));
+      this.muzzle.position.copy(this._vmGroup.worldToLocal(muzzle));
     }
   }
 
@@ -269,6 +283,10 @@ export class LocalPlayer {
 
   /** 총구 위치 (예광탄 시작점) */
   muzzlePosition() {
+    if (this.viewmodel) {
+      const [x, y] = this.weapon === 'sniper' ? [.6, .02] : this.weapon === 'smg' ? [.325, .095] : [.45, .05];
+      return this.viewmodel.localToWorld(new THREE.Vector3(x, y, 0));
+    }
     const eye = this.pos.y + (this._eye ?? PLAYER.eyeHeight);
     const fwd = new THREE.Vector3(0, 0, -1).applyQuaternion(this.camera.quaternion);
     const right = new THREE.Vector3(1, 0, 0).applyQuaternion(this.camera.quaternion);

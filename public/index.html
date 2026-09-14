@@ -163,6 +163,40 @@
   .hint { font-size:11.5px; color:var(--dim); line-height:1.7; margin-top:16px; }
   .hint b { color:var(--ink); font-weight:600; }
   @media (max-width:430px){ h1{font-size:25px;} .card{padding:18px;} }
+
+  /* Mission dossier and in-world radio */
+  #briefing { background:radial-gradient(ellipse at 80% 20%,#253331 0%,#101714 42%,#080c0b 100%); touch-action:pan-y; }
+  #briefing .card { max-width:780px; padding:clamp(20px,4vw,42px); border-radius:4px; background:#111915; border-color:#405046; margin:auto; }
+  .dossier-label { color:#b8c9bb; font-size:11px; letter-spacing:.2em; margin:0 0 12px; }
+  #briefing h1 { font-size:clamp(24px,5vw,38px); letter-spacing:-.02em; }
+  .brief-meta { display:flex; flex-wrap:wrap; gap:10px 28px; padding:16px 0; margin:12px 0 24px; border-bottom:1px solid #344339; color:#a7b9ae; font-size:13px; }
+  .brief-page { min-height:220px; }
+  #briefStep { color:var(--accent); font-size:12px; letter-spacing:.08em; margin-bottom:12px; }
+  #briefTitle { font-size:24px; letter-spacing:0; }
+  #briefBody { font-size:17px; line-height:1.85; color:#e2e9e2; }
+  #briefDetail { padding:16px; border-left:2px solid var(--accent); background:#19221b; color:#bdcbbc; line-height:1.8; font-size:14px; }
+  #briefStatus { min-height:24px; margin:16px 0 0; color:#b8c9bb; font-size:13px; }
+  #briefing .row { flex-wrap:wrap; }
+  #briefing button { min-height:46px; }
+  #radio { position:absolute; bottom:120px; left:50%; transform:translateX(-50%); width:min(540px,80vw); padding:12px 16px;
+    border-left:3px solid var(--accent); background:rgba(8,14,11,.88); font-size:14px; line-height:1.65; z-index:3; }
+  #radio b { display:block; color:var(--accent); font-size:10px; letter-spacing:.18em; }
+  #resStory { color:#c1c8bd; line-height:1.8; font-size:14px; margin-top:20px; border-top:1px solid var(--line); padding-top:16px; }
+  .mission-note { border-left:2px solid var(--accent); padding:10px 13px; color:#b9bdb0; font-size:13px; line-height:1.7; margin:18px 0; }
+
+  /* Scope view: the camera's central ray is the reticle's exact center. */
+  #scope { position:absolute; inset:0; display:grid; place-items:center; z-index:1; overflow:hidden; }
+  #scopeLens { width:min(76vmin,540px); aspect-ratio:1; border:12px solid #111315; border-radius:50%;
+    box-shadow:0 0 0 150vmax #070909, inset 0 0 30px 12px rgba(0,0,0,.4); position:relative;
+    background:linear-gradient(90deg,transparent calc(50% - .7px),#121413 calc(50% - .7px),#121413 calc(50% + .7px),transparent calc(50% + .7px)),
+      linear-gradient(transparent calc(50% - .7px),#121413 calc(50% - .7px),#121413 calc(50% + .7px),transparent calc(50% + .7px)); }
+  #scopeLens::after { content:''; width:4px; height:4px; background:#ee4736; border-radius:50%; position:absolute; left:50%; top:50%; transform:translate(-50%,-50%); }
+  #hitMarker { position:absolute; top:50%; left:50%; width:22px; height:22px; transform:translate(-50%,-50%) rotate(45deg);
+    border:2px solid #e2614f; opacity:0; z-index:5; }
+  #hitMarker.active { opacity:1; }
+  .hudTop { position:relative; z-index:2; } .hudBot { z-index:2; }
+  #crosshair { z-index:4; }
+  @media(max-height:620px) { #briefing { align-items:flex-start; } .brief-page { min-height:0; } #briefBody { font-size:15px; } }
 </style>
 </head>
 <body>
@@ -170,6 +204,9 @@
 
 <!-- ===================== HUD ===================== -->
 <div id="hud" class="hidden">
+  <div id="scope" class="hidden" aria-hidden="true"><div id="scopeLens"></div></div>
+  <div id="hitMarker" aria-hidden="true"></div>
+  <div id="radio" class="hidden" role="status"><b>COMMAND / 지휘부</b><span id="radioText"></span></div>
   <div id="crosshair"><i class="h l"></i><i class="h r"></i><i class="v t"></i><i class="v b"></i></div>
   <div class="hudTop">
     <div class="timer" id="timer">6:00</div>
@@ -250,6 +287,7 @@
 <div class="screen hidden" id="lobby">
   <div class="card">
     <h2>작전 대기실</h2>
+    <div class="mission-note"><b>작전명: 잔향</b><br>장비 준비 → 사건 브리핑 → 전원 진입 확인 → 현장 작전</div>
     <div class="codebox">
       <div class="lbl">방 코드</div>
       <div class="val" id="lobbyCode">-----</div>
@@ -279,6 +317,27 @@
   </div>
 </div>
 
+<!-- ===================== 작전 브리핑 ===================== -->
+<section class="screen hidden" id="briefing" aria-labelledby="missionTitle">
+  <div class="card">
+    <p class="dossier-label">RAVENWOOD / INCIDENT FILE 017</p>
+    <h1 id="missionTitle">작전명: 잔향</h1>
+    <div class="brief-meta"><span id="missionLocation"></span><span id="missionTime"></span><span>레드 팀 · 현장 대응반</span></div>
+    <div class="brief-page">
+      <div id="briefStep"></div>
+      <h2 id="briefTitle" tabindex="-1"></h2>
+      <p id="briefBody"></p>
+      <p id="briefDetail"></p>
+    </div>
+    <div id="briefStatus" role="status" aria-live="polite"></div>
+    <div class="row">
+      <button class="ghost" id="briefBack">이전</button>
+      <button class="primary" id="briefNext">다음 보고</button>
+    </div>
+    <div class="row"><button class="ghost hidden" id="briefCancel">대기실로 복귀</button><button class="ghost" id="briefLeave">방 나가기</button></div>
+  </div>
+</section>
+
 <!-- ===================== 로딩 ===================== -->
 <div class="screen hidden" id="loading">
   <div class="card">
@@ -293,6 +352,7 @@
   <div class="card result">
     <div class="big" id="resTitle">작전 성공</div>
     <div class="why" id="resWhy"></div>
+    <p id="resStory"></p>
     <ul class="stats" id="resStats"></ul>
     <div class="row"><button class="primary" id="btnAgain">대기실로</button></div>
   </div>

@@ -10,7 +10,7 @@
 
 import * as THREE from 'three';
 import { QUALITY, NET, PLAYER, loadSettings, saveSettings, guessQuality } from './config.js';
-import { BOMB_SITES, MAP } from './map-data.js';
+import { BOMB_SITES, MAP, rayObstacleDistance } from './map-data.js';
 import { AssetManager } from './assets.js';
 import { World } from './world.js';
 import { Entities } from './entities.js';
@@ -18,6 +18,10 @@ import { LocalPlayer } from './player.js';
 import { Input, isTouchDevice } from './input.js';
 import { Hud } from './hud.js';
 import { VisualPipeline } from './visuals.js';
+
+import { ShotState } from './shot-state.js';
+import { traceShot } from './shot-trace.js';
+import { MISSION } from './mission-story.js';
 
 const DEFUSE_RANGE = 1.6;   // 서버 상수와 동일해야 한다
 
@@ -46,6 +50,8 @@ export class Game {
     this.reloading = false;
     this.alive = true;
 
+    this.shots = new ShotState();
+    this._matchVersion = 0;
     this._lastFrame = 0;
     this._netAccum = 0;
     this._fpsAccum = 0;
@@ -159,12 +165,17 @@ export class Game {
       }
     });
 
-    s.on('botHit', (d) => { if (d.by === this.myId) this.hud.flashHit(); });
+    s.on('botHit', (d) => {
+      if (d.by !== this.myId) {
+        this.entities.confirmBotHealth(d.id, d.hp);
+        this.entities.applyShotPredictions(this.shots.pending);
+      }
+    });
 
     s.on('botDown', (d) => {
       if (d.by === this.myId) this.hud.killfeed('적 제압');
       const bot = this.entities.bots.get(d.id);
-      if (bot) { bot.alive = false; bot.group.visible = false; }
+      if (bot) { bot.alive = false; bot.confirmedDead = true; bot.group.visible = false; }
     });
 
     s.on('siteProgress', (d) => {
@@ -176,7 +187,7 @@ export class Game {
       this.siteProgress.set(d.id, 1);
       this.hud.setSiteDefused(d.id);
       this.world.setSiteDefused(d.id);
-      this.hud.banner(`${this._siteLabel(d.id)} 해체 완료`, 2000);
+      this.hud.radio(d.id === 'A' ? MISSION.siteA : MISSION.siteB);
     });
 
     s.on('playerLeft', (d) => this.entities.removePlayer(d.id));
@@ -190,6 +201,7 @@ export class Game {
 
   dispose() {
     this.matchActive = false;
+    this._matchVersion++;
     this.stop();
     this.input?.dispose();
     removeEventListener('resize', this._resizeHandler);
@@ -227,7 +239,11 @@ export class Game {
     this.hp = 100;
     this.reloading = false;
     this._defusingSite = null;
-    this._lastShotAt = 0;
+    this._matchVersion++;
+    this.shots.reset();
+    this._lastSnapshotSeq = -1;
+    this._viewClock = null;
+    this._lastShotAt = -Infinity;
     this._netAccum = 0;
     this._lowFpsTime = 0;
 
@@ -243,6 +259,7 @@ export class Game {
       this.player.setWeapon(me.weapon);
       const w = this.weapons[me.weapon];
       this.ammo = w.mag;
+      this.shots.serverAmmo = w.mag;
       this.reserve = w.reserve;
       this.weaponName = w.name;
     }
@@ -253,7 +270,7 @@ export class Game {
     this.hud.setAmmo(this.ammo, this.reserve, false, this.weaponName);
     this.hud.show(null);
     this.hud.showTouch(isTouchDevice);
-    this.hud.banner('작전 개시 — 폭발물을 해체하라', 2600);
+    this.hud.radio(MISSION.entry);
 
     this.matchActive = true;
     this.input.enable();
@@ -263,14 +280,20 @@ export class Game {
 
   /* ---- 스냅샷 ----------------------------------------------------------- */
   _onSnapshot(snap) {
+    if (!this.matchActive || snap.seq <= this._lastSnapshotSeq) return;
     this.remaining = snap.remaining;
-    this.entities.onSnapshot(snap);
+    this._lastSnapshotSeq = snap.seq;
+    this._viewClock = { server: snap.t, local: performance.now() };
 
     const me = snap.players.find((p) => p.id === this.myId);
     if (!me) return;
 
     // 서버가 진실 - 탄약/체력/생존은 서버 값을 그대로 따른다
-    this.ammo = me.ammo;
+    if (me.shotSeq === undefined) this.shots.serverAmmo = me.ammo;
+    else this.shots.acknowledge(me.shotSeq, me.ammo);
+    this.ammo = this.shots.ammo;
+    this.entities.onSnapshot(snap);
+    this.entities.applyShotPredictions(this.shots.pending);
     this.reserve = me.reserve;
     this.reloading = !!me.reloading;
     this.hp = me.hp;
@@ -288,12 +311,13 @@ export class Game {
     if (me.alive) this.player.reconcile(me.x, me.z, me.y, me.inputSeq);
 
     this.hud.setHp(me.hp);
-    this.hud.setAmmo(me.ammo, me.reserve, me.reloading, this.weaponName);
+    this.hud.setAmmo(this.ammo, me.reserve, me.reloading, this.weaponName);
   }
 
   /* ---- 매치 종료 -------------------------------------------------------- */
   _onMatchEnd(d) {
     this.matchActive = false;
+    this._matchVersion++;
     this.input.disable();
     this.stop();
     this.hud.showTouch(false);
@@ -338,6 +362,7 @@ export class Game {
 
     // 이동 예측
     this.player.update(dt, input);
+    this.hud.setAim(this.player.adsAmount, this.player.weapon, this.alive);
 
     // 사격 / 장전 / 해체
     if (this.alive) {
@@ -366,29 +391,52 @@ export class Game {
   /* ---- 사격 ------------------------------------------------------------- */
   _tryShoot(now) {
     const w = this.weapons?.[this.player.weapon];
-    if (!w) return;
-    const interval = 60000 / w.rpm;
-    if (now - (this._lastShotAt || 0) < interval) return;
+    if (!w || !this.matchActive || !this.alive || !this.socket.connected) return;
+    if (now - this._lastShotAt < 60000 / w.rpm) return;
     if (this.reloading || this.ammo <= 0) {
       if (this.ammo <= 0 && !this.reloading) this._tryReload();
       return;
     }
     this._lastShotAt = now;
-
     const dir = this.player.aimDirection();
     const from = this.player.muzzlePosition();
-
-    // 연출은 즉시 (서버 응답을 기다리면 손맛이 죽는다)
-    this.ammo = Math.max(0, this.ammo - 1);
+    const origin = { x: this.player.pos.x, y: this.player.pos.y + PLAYER.eyeHeight -
+      (this.player.crouching ? .45 : 0), z: this.player.pos.z };
+    const predicted = traceShot(origin, dir, w.range, this.entities.shotTargets(), rayObstacleDistance);
+    const prediction = predicted.hit ? { targetId: predicted.targetId,
+      damage: Math.round(w.damage * (predicted.part === 'head' ? w.headMul : 1)) } : null;
+    const shotId = this.shots.fire(prediction);
+    this.ammo = this.shots.ammo;
     this.hud.setAmmo(this.ammo, this.reserve, false, this.weaponName);
     this.player.kick();
     this.player.addShotSpread();
+    // Draw to the predicted aim impact immediately, including on slow connections.
+    const impact = new THREE.Vector3(origin.x, origin.y, origin.z).addScaledVector(dir, predicted.dist);
+    const tracer = impact.sub(new THREE.Vector3(from.x, from.y, from.z));
+    this.entities.effects.shot(from, tracer.clone().normalize(), tracer.length());
+    if (predicted.hit) this.hud.flashHit();
+    this.entities.applyShotPredictions(this.shots.pending);
 
-    this.socket.emit('shoot', { dx: dir.x, dy: dir.y, dz: dir.z }, (res) => {
-      if (!res?.ok) return;
-      this.ammo = res.ammo;
-      this.entities.effects.shot(from, dir, res.dist ?? 40);
-      if (res.hit) this.hud.flashHit();
+    const version = this._matchVersion;
+    const viewTime = this._viewClock ? this._viewClock.server + now - this._viewClock.local - NET.interpDelayMs : undefined;
+    this.socket.timeout(5000).emit('shoot', {
+      shotId, dx: dir.x, dy: dir.y, dz: dir.z, viewTime, input: this.player.netState(),
+    }, (error, res) => {
+      if (version !== this._matchVersion || !this.matchActive || shotId <= this.shots.ackId) return;
+      if (error) {
+        this.shots.expire(shotId);
+        this.hud.banner('서버 응답 지연 · 명중 확인 중', 1800);
+      } else if (res && this.shots.acknowledge(res.shotSeq ?? shotId, res.ammo)) {
+        if (res.hit) {
+          this.entities.confirmBotHealth(res.targetId, res.targetHp);
+          if (!predicted.hit) this.hud.flashHit();
+        }
+      } else {
+        this.shots.expire(shotId);
+      }
+      this.ammo = this.shots.ammo;
+      this.entities.applyShotPredictions(this.shots.pending);
+      this.hud.setAmmo(this.ammo, this.reserve, this.reloading, this.weaponName);
     });
   }
 
