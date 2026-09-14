@@ -7,8 +7,8 @@
  * 헤드리스 브라우저에서 오프라인 렌더링으로 재 보니 총성이 최대 0.25(-12dBFS),
  * 비명·수갑·장전은 0.03~0.08(-30~-22dBFS)밖에 나오지 않았다. 소리가 "안 나는"
  * 게 아니라 들리지 않을 만큼 작았다. 전체를 올리고, 목소리 계열은 필터가 먹는
- * 만큼 따로 더 올린다. 마지막에 리미터가 뭉개지지 않게 잡아 준다.
- *   node audio-probe.mjs 로 언제든 다시 잴 수 있다.
+ * 만큼 따로 더 올린다.
+ *   npm run audio:levels 로 언제든 다시 잴 수 있다.
  */
 const BOOST = 2.0;        // 모든 소리 공통 배율
 const VOX_MAKEUP = 4;     // 대역통과 두 겹을 지나며 잃는 만큼 목소리에 더 준다
@@ -59,8 +59,10 @@ export class GameAudio {
         if (!this.context) return;
         this.master = this.context.createGain();
         this.master.gain.value = this.volume;
-        // 리미터. 총성과 폭발이 동시에 터져도 찢어지지 않게 꼭대기만 눌러 준다.
-        // 없으면 크기를 올린 만큼 그대로 클리핑된다.
+        /* 리미터(DynamicsCompressor)를 한 번 넣어 봤다가 뺐다. 어떤 설정을
+         * 줘도 그 노드를 지나는 것만으로 12dB 가까이 깎여서(총성 0.66 -> 0.15),
+         * 크기를 올린 의미가 사라졌다. 오프라인 렌더링으로 확인했다.
+         * 대신 소리마다 최대 크기를 1.0 아래로 맞춰 뒀다. */
         this.master.connect(this.context.destination);
         const length = this.context.sampleRate;
         this.noise = this.context.createBuffer(1, length, length);
