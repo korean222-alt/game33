@@ -32,6 +32,20 @@ try {
   await page.click('#btnCreate');
   await page.waitForFunction(() => window.__mr?.input, null, { timeout: 30000 });
   await page.locator('#lobby').waitFor({ state: 'visible' });
+  // Keep real rendering enabled at a smaller framebuffer on software-only CI GPUs.
+  await page.evaluate(() => {
+    const g = window.__mr;
+    g.renderer.setPixelRatio(0.5);
+    g.renderer.setSize(480, 320);
+    g._smokeEvents = [];
+    g.socket.onAny((name, data) => {
+      if (['doorAction', 'doorState', 'matchEnd', 'playerDown', 'playerHit'].includes(name))
+        g._smokeEvents.push({ name, data, time: performance.now() });
+    });
+    g.socket.onAnyOutgoing((name, data) => {
+      if (name === 'door') g._smokeEvents.push({ name: 'request', data, time: performance.now() });
+    });
+  });
   await page.click('#btnReady');
   await page.waitForFunction(() => !document.getElementById('btnStart').disabled);
   await page.click('#btnStart');
@@ -71,7 +85,7 @@ try {
   await page.evaluate(() => {
     const g = window.__mr;
     // Relocate the test actor without resetting the match's input sequence.
-    g.player.pos.set(0, 0, 19.15); g.player.vel.set(0, 0, 0); g.player.yaw = 0;
+    g.player.pos.set(0, 0.22, 19.15); g.player.vel.set(0, 0, 0); g.player.yaw = 0;
     g.socket.emit('input', g.player.netState());
   });
   await page.waitForFunction(() => window.__mr.doors.nearest(window.__mr.player.pos.x, window.__mr.player.pos.z)?.door.id === 'front');
@@ -105,6 +119,7 @@ try {
     g.player.pos.set(-2.2, 0, 30.4); g.player.vel.set(0, 0, 0); g.player.yaw = 0; g.player.pitch = 1.1; g.player._applyCamera(.1);
     g._tryShoot(performance.now());
   });
+  stage = 'shot and reload';
   await page.keyboard.press('KeyR');
   await page.waitForFunction(() => window.__mr.audio.reloadSources.size > 0);
   await page.waitForFunction(() => !window.__mr.reloading && window.__mr.ammo === window.__mr.weapons.rifle.mag, null, { timeout: 8000 });
@@ -124,7 +139,7 @@ try {
     return g && { position: g.player?.pos.toArray(), active: g.matchActive, alive: g.alive,
       inputEnabled: g.input?.enabled, peek: g.input?.peek, door: g.doors?.get('front')?.state,
       pending: g._doorPending, busyUntil: g._doorBusyUntil, now: performance.now(),
-      banner: document.getElementById('banner')?.textContent };
+      banner: document.getElementById('banner')?.textContent, events: g._smokeEvents };
   }).catch(() => null));
   throw error;
 } finally {

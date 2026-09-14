@@ -117,6 +117,19 @@ export class Game {
     this.audio = new GameAudio({ enabled: this.settings.soundEnabled !== false });
     this.audio.bind(document);
 
+    // Prepare static and skinned shader variants while the loading screen is up.
+    // Otherwise first-frame compilation can stall input while the server's AI runs.
+    onProgress?.(1, 1, '화면 준비');
+    const warmup = new THREE.Group();
+    warmup.add(this.assets.instance('character', { skinned: true }));
+    for (const weapon of ['rifle', 'smg', 'sniper']) warmup.add(this.assets.instance(weapon));
+    this.world.scene.add(warmup);
+    try {
+      await this.renderer.compileAsync(this.world.scene, this.camera);
+    } finally {
+      this.world.scene.remove(warmup);
+    }
+
     this.input.onLockChange((locked) => {
       if (!locked && this.matchActive) this.hud.banner('클릭하면 다시 조작합니다', 2500);
     });
