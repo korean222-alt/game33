@@ -16,11 +16,17 @@ import { createWeaponOptic, disposeOptic } from './weapon-optic.js';
 import { sightPosition } from './viewmodel-layout.js';
 
 export class LocalPlayer {
-  constructor(camera, scene, assets, settings) {
+  /**
+   * @param colliders  문 상태가 반영된 콜라이더 배열을 돌려주는 함수.
+   *                   닫힌 문이 사람을 막아야 하므로 매 프레임 물어본다.
+   */
+  constructor(camera, scene, assets, settings, colliders = () => COLLIDERS) {
     this.camera = camera;
     this.scene = scene;
     this.assets = assets;
     this.settings = settings;
+    this.colliders = colliders;
+    this.holdingUse = false;
 
     this.pos = new THREE.Vector3(0, 0, 4.6);
     this.vel = new THREE.Vector3();
@@ -109,9 +115,11 @@ export class LocalPlayer {
   update(dt, input) {
     if (!this.alive) { this._applyCamera(dt); return; }
 
+    const colliders = this.colliders();
+    this.holdingUse = !!input.use;
     const wantSprint = input.sprint && input.move.y > 0.3 && !input.ads && !input.crouch;
-    // Do not stand up into a table/shelf after entering a low opening.
-    this.crouching = !!input.crouch || (this.crouching && COLLIDERS.some(c =>
+    // 낮은 틈으로 들어간 뒤 테이블/선반 안에서 일어서지 않게 한다.
+    this.crouching = !!input.crouch || (this.crouching && colliders.some(c =>
       (c.y || 0) > this.pos.y && (c.y || 0) < this.pos.y + PLAYER.height &&
       overlaps(this.pos.x, this.pos.z, PLAYER.radius, c)));
     this.sprinting = wantSprint;
@@ -148,7 +156,7 @@ export class LocalPlayer {
     const body = moveBody(this.pos, this.vel, Math.min(dt, .1), {
       radius: PLAYER.radius, height: this.crouching ? 1.3 : PLAYER.height,
       grounded: this.onGround, gravity: PLAYER.gravity,
-    });
+    }, colliders);
     this.pos.set(body.pos.x, body.pos.y, body.pos.z);
     this.vel.set(body.vel.x, body.vel.y, body.vel.z);
     this.onGround = body.onGround;
@@ -306,6 +314,7 @@ export class LocalPlayer {
       moving: this.moving ? 1 : 0,
       sprint: this.sprinting ? 1 : 0,
       crouch: this.crouching ? 1 : 0,
+      use: this.holdingUse ? 1 : 0,
     };
   }
 
@@ -316,7 +325,7 @@ export class LocalPlayer {
     const height = this.crouching ? 1.3 : PLAYER.height;
     this.pos.y = Math.max(0, this.pos.y + delta.y);
     const fixed = resolveCircle(this.pos.x + delta.x, this.pos.z + delta.z,
-      PLAYER.radius, COLLIDERS, this.pos.y, height);
+      PLAYER.radius, this.colliders(), this.pos.y, height);
     this.pos.x = fixed.x;
     this.pos.z = fixed.z;
     if (delta.x) this.vel.x = 0;

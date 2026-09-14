@@ -23,9 +23,9 @@
     "bytes": 435860,
     "sha256": "0a0ec9793a08f5f4973d5abe2bd19cc50c764de7dcb685609a9ce8a523abd881"
   },
-  "public/assets/models/character.glb": {
-    "bytes": 70928,
-    "sha256": "12d23cb417896492bf1a5a8f80c93f66ee920868a6fce890790fcb7ba92f8d86"
+  "public/assets/models/character-animated.glb": {
+    "bytes": 2001792,
+    "sha256": "543bd94c8bad7157f9fe032d211617d32685209c3b9c5f9154dca73ca982b09e"
   },
   "public/assets/models/weapon-rifle.glb": {
     "bytes": 180320,

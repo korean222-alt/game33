@@ -295,7 +295,7 @@ function boot() {
   initMenu();
   initLobby();
   state.hud.show('menu');
-  console.log(`[MARKET RAID] 게임 서버: ${serverLabel}`);
+  console.log(`[RAVENWOOD] 게임 서버: ${serverLabel}`);
 
   if (isTouchDevice) document.body.classList.add('touch');
 
