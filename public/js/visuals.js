@@ -5,44 +5,27 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-// Seeded grain keeps the room stable across reloads and clients.
-function surface(kind) {
-  const cv = document.createElement('canvas'); cv.width = cv.height = 512;
-  const g = cv.getContext('2d'); let seed = 42;
-  const random = () => ((seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296);
-  g.fillStyle = kind === 'floor' ? '#68747b' : '#8d9594'; g.fillRect(0, 0, 512, 512);
-  for (let i = 0; i < 15000; i++) {
-    g.fillStyle = random() > .5 ? 'rgba(255,255,255,.045)' : 'rgba(0,0,0,.07)';
-    g.fillRect(random() * 512, random() * 512, 1 + random() * 4, 1 + random() * 4);
-  }
-  if (kind === 'floor') {
-    for (let y = 0; y < 512; y += 128) for (let x = 0; x < 512; x += 128) {
-      g.strokeStyle = '#354249'; g.lineWidth = 3; g.strokeRect(x, y, 128, 128);
-      g.strokeStyle = 'rgba(216,231,229,.3)'; g.lineWidth = 1; g.strokeRect(x + 3, y + 3, 122, 122);
-    }
-    for (let i = 0; i < 16; i++) {
-      const x = random() * 512, y = random() * 512, r = 12 + random() * 65;
-      const grad = g.createRadialGradient(x, y, 0, x, y, r);
-      grad.addColorStop(0, 'rgba(19,34,38,.23)'); grad.addColorStop(1, 'rgba(19,34,38,0)');
-      g.fillStyle = grad; g.fillRect(x - r, y - r, r * 2, r * 2);
-    }
-  }
-  const tex = new THREE.CanvasTexture(cv); tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = 4;
-  return tex;
-}
+import { MAP, ROOMS, WALLS, LIGHTS } from './map-data.js';
 
 export function roomMaterials() {
-  const floor = surface('floor'); floor.repeat.set(5, 4);
-  const wall = surface('wall'); wall.repeat.set(3, 2);
-  // Height/roughness maps contain data, so they must not use sRGB decoding.
-  const bump = floor.clone(); bump.colorSpace = THREE.NoColorSpace;
-  const wallBump = wall.clone(); wallBump.colorSpace = THREE.NoColorSpace;
+  const loader = new THREE.TextureLoader();
+  const tex = (file, color = false) => {
+    const t = loader.load('/assets/textures/' + file);
+    t.wrapS = t.wrapT = THREE.RepeatWrapping;
+    t.colorSpace = color ? THREE.SRGBColorSpace : THREE.NoColorSpace;
+    t.anisotropy = 4;
+    return t;
+  };
   return {
-    floor: new THREE.MeshStandardMaterial({ map: floor, bumpMap: bump, bumpScale: .022,
-      roughnessMap: bump, roughness: .68, metalness: .16 }),
-    wall: new THREE.MeshStandardMaterial({ map: wall, bumpMap: wallBump, bumpScale: .028,
-      color: 0x9caeb4, roughness: .88, metalness: .03 }),
+    floor: new THREE.MeshStandardMaterial({
+      map: tex('concrete-color.jpg', true), normalMap: tex('concrete-normal.jpg'),
+      normalScale: new THREE.Vector2(.65,.65), roughnessMap: tex('concrete-rough.jpg'),
+      roughness: .85, metalness: 0,
+    }),
+    wall: new THREE.MeshStandardMaterial({
+      map: tex('brick-color.jpg', true), normalMap: tex('brick-normal.jpg'),
+      normalScale: new THREE.Vector2(.55,.55), roughness: .88, metalness: 0,
+    }),
   };
 }
 
@@ -60,42 +43,68 @@ function sign(scene, text, caption, x, y, z, color, width = 2.2, rotation = 0) {
 }
 
 export function dressRoom(scene, renderer) {
-  const pmrem = new THREE.PMREMGenerator(renderer);
-  const env = new RoomEnvironment();
-  const target = pmrem.fromScene(env, .04);
-  scene.environment = target.texture; scene.environmentIntensity = .42;
-  env.dispose(); pmrem.dispose();
-  scene.userData.environmentTarget = target;
-
-  sign(scene, '남부시장', 'NAMBU MARKET / NIGHT OPERATIONS', .25, 2.48, 3.17, '#73ffe0', 3.4);
-  sign(scene, '청과 · 과일', 'FRESH PRODUCE / 01', -4.7, 2.54, .95, '#ffd38a');
-  sign(scene, '시장 잡화', 'GENERAL GOODS / 02', 0, 2.58, 1.05, '#7effe1');
-  sign(scene, '식료품', 'LOCAL GROCER / 03', 4.7, 2.54, .95, '#ffa181');
-  sign(scene, '창고 A', 'STORAGE / AUTHORIZED PERSONNEL', 2, 2.4, -5.31, '#71d8ff', 2.4);
-  const metal = new THREE.MeshStandardMaterial({ color: 0x273943, roughness: .48, metalness: .72 });
-  for (const z of [-4.6, -1.8, 1.8, 4.6]) {
-    const beam = new THREE.Mesh(new THREE.BoxGeometry(14.7, .14, .13), metal);
-    beam.position.set(0, 3.04, z); scene.add(beam);
+  const pmrem=new THREE.PMREMGenerator(renderer),env=new RoomEnvironment();
+  const target=pmrem.fromScene(env,.04);
+  scene.environment=target.texture;scene.environmentIntensity=.5;
+  scene.userData.environmentTarget=target;env.dispose();pmrem.dispose();
+  const plaster=new THREE.MeshStandardMaterial({color:0xe8dfca,roughness:.82});
+  const brass=new THREE.MeshStandardMaterial({color:0xbfa16b,roughness:.3,metalness:.8});
+  const wood=new THREE.MeshStandardMaterial({color:0x312017,roughness:.65});
+  const glow=new THREE.MeshStandardMaterial({color:0xffe9bf,emissive:0xffd294,emissiveIntensity:2.4});
+  const box=(x,y,z,w,h,d,material)=>{
+    const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material);
+    m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;scene.add(m);return m;
+  };
+  // Wall panels and cornices stay INSIDE the wall collider's footprint.
+  for(const w of WALLS){
+    box(w.x,.6,w.z,w.w,1.2,w.d,plaster);
+    box(w.x,1.22,w.z,w.w,.055,w.d,brass);
+    box(w.x,6.5,w.z,w.w,.3,w.d,plaster);
+    box(w.x,6.7,w.z,w.w,.04,w.d,brass);
   }
-  const warm = new THREE.MeshStandardMaterial({ color: 0xffdab0, emissive: 0xffac53, emissiveIntensity: 4 });
-  const cool = new THREE.MeshStandardMaterial({ color: 0xabfff1, emissive: 0x42cfce, emissiveIntensity: 4 });
-  for (const x of [-3.4, 3.5]) for (const z of [-3.9, 0, 4.3]) {
-    const casing = new THREE.Mesh(new THREE.BoxGeometry(.14, .09, 1.8), metal);
-    casing.position.set(x, 3.01, z); scene.add(casing);
-    const strip = new THREE.Mesh(new THREE.BoxGeometry(.07, .018, 1.65), z > 1 ? cool : warm);
-    strip.position.set(x, 2.95, z); scene.add(strip);
+  // Fine coffer lines, recessed in the ceiling.
+  for(let x=-21;x<=21;x+=6)box(x,6.94,0,.1,.1,35.6,wood);
+  for(let z=-15;z<=15;z+=6)box(0,6.94,z,47.6,.1,.1,wood);
+  for(const L of LIGHTS){
+    box(L.x,6.2,L.z,.07,1.5,.07,brass);
+    const ring=new THREE.Mesh(new THREE.TorusGeometry(1.15,.035,6,32),brass);
+    ring.rotation.x=Math.PI/2;ring.position.set(L.x,L.y-.15,L.z);scene.add(ring);
+    for(let i=0;i<8;i++){
+      const a=i*Math.PI/4,x=L.x+Math.cos(a)*1.15,z=L.z+Math.sin(a)*1.15;
+      box(x,L.y,z,.09,.3,.09,glow);
+    }
   }
-  // Painted lane edges sit flush on the floor and introduce no invisible collisions.
-  const paint = new THREE.MeshStandardMaterial({ color: 0xd5b75f, roughness: .78 });
-  for (const x of [-3.4, 3.5]) for (let z = -1.6; z < 4.6; z += .8) {
-    const dash = new THREE.Mesh(new THREE.PlaneGeometry(.035, .42), paint);
-    dash.rotation.x = -Math.PI / 2; dash.position.set(x - .55, .007, z); scene.add(dash);
+  // Flush rugs and brass borders, no invisible floor obstacles.
+  for(const r of ROOMS){
+    const mat=new THREE.MeshStandardMaterial({color:r.x===0?0x58232b:0x233d39,roughness:.98});
+    const w=r.x===0?7:r.w-5,d=r.x===0?26:r.d-3;
+    const rug=new THREE.Mesh(new THREE.PlaneGeometry(w,d),mat);
+    rug.rotation.x=-Math.PI/2; rug.position.set(r.x,.008,r.z);scene.add(rug);
+    for(const x of [-w/2+.15,w/2-.15])box(r.x+x,.012,r.z,.025,.005,d-.3,brass);
+    for(const z of [-d/2+.15,d/2-.15])box(r.x,.012,r.z+z,w-.3,.005,.025,brass);
   }
-  const positions = new Float32Array(100 * 3);
-  for (let i = 0; i < 100; i++) { positions[i * 3] = Math.sin(i * 78.23) * 7; positions[i * 3 + 1] = .3 + (i % 29) * .09; positions[i * 3 + 2] = Math.cos(i * 19.8) * 5; }
-  const dust = new THREE.Points(new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(positions, 3)),
-    new THREE.PointsMaterial({ color: 0xdbe9df, size: .012, transparent: true, opacity: .22, depthWrite: false }));
-  scene.add(dust); return dust;
+  sign(scene,'RAVENWOOD','ESTATE / TACTICAL OPERATIONS',0,4.4,-17.75,'#d6bc82',6);
+  for(const r of ROOMS.slice(1)){
+    // Room identification at the wing entrance, above the doorway.
+    sign(scene,r.name,r.label,r.x<0?-9.02:9.02,3.8,r.z,'#d6bc82',3,r.x<0?Math.PI/2:-Math.PI/2);
+  }
+  // Tall luminous windows are flush with the exterior walls.
+  const glass=new THREE.MeshStandardMaterial({color:0xadc9d6,emissive:0x84aabe,emissiveIntensity:.65,roughness:.3,metalness:.2});
+  for(const x of [-23.79,23.79])for(const z of [-14,-10,-2,2,10,14]){
+    box(x,3.75,z,.015,3.4,2.3,glass);
+    box(x,3.75,z,.02,3.4,.065,brass);
+    box(x,3.75,z,.02,.065,2.3,brass);
+  }
+  // Framed wall art: unlit pigments with warm brass frames.
+  for(const x of [-20,-13,13,20]){
+    box(x,3.7,17.76,2.4,1.7,.06,brass);
+    box(x,3.7,17.71,2.2,1.5,.035,new THREE.MeshStandardMaterial({color:x<0?0x263e42:0x523b31,roughness:.95}));
+  }
+  const positions=new Float32Array(120*3);
+  for(let i=0;i<120;i++){positions[i*3]=Math.sin(i*78.23)*23;positions[i*3+1]=.3+(i%29)*.19;positions[i*3+2]=Math.cos(i*19.8)*17;}
+  const dust=new THREE.Points(new THREE.BufferGeometry().setAttribute('position',new THREE.BufferAttribute(positions,3)),
+    new THREE.PointsMaterial({color:0xf2dfba,size:.016,transparent:true,opacity:.18,depthWrite:false}));
+  scene.add(dust);return dust;
 }
 
 export class VisualPipeline {

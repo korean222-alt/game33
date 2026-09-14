@@ -41,6 +41,11 @@ test('two clients: readiness gate, zero-axis shot, jumping origin, loadout lock 
   const me = snapshot.players.find(p => p.id === host.id);
   assert.equal(me.ammo, 29); // Mid-match loadout changes must not refill ammunition.
   assert.equal((await request(host, 'shoot', { dx: null, dy: 0, dz: -1 })).ok, false);
+  const standing=once(host,'snapshot');
+  host.emit('input',{x:0,y:2.4,z:-13,yaw:0,pitch:0});
+  const [elevated]=await standing;
+  const onLanding=elevated.players.find(p=>p.id===host.id);
+  assert.equal(onLanding.x,0);assert.equal(onLanding.z,-13);assert.equal(onLanding.y,2.4);
   const second = await request(host, 'createRoom', { name: '검증1', weapon: 'rifle' });
   guest.emit('leaveRoom'); await delay(100);
   const health = await (await fetch(`http://localhost:${port}/health`)).json();
