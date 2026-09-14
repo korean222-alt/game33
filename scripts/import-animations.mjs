@@ -52,6 +52,15 @@ const CLIPS = {
 /** "Left Strafe Walking(1).fbx" -> "Left Strafe Walking" */
 const clipKey = (file) => path.basename(file, '.fbx').replace(/\s*\(\d+\)$/, '').trim();
 
+/* 설치된 Playwright 버전과 미리 받아 둔 Chromium 버전이 어긋나면 실행 파일을
+ * 못 찾는다. CHROMIUM_PATH 로 직접 지정할 수 있게 열어 둔다.
+ *   예) CHROMIUM_PATH=/opt/pw-browsers/chromium node scripts/...
+ */
+const launchOptions = (args) => ({
+  args,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
+
 async function loadPlaywright() {
   // CommonJS 로 배포된 버전은 ESM import 시 default 아래에 들어온다.
   const unwrap = (mod) => (mod.chromium ? mod : mod.default);
@@ -238,7 +247,7 @@ async function main() {
   const server = await serve(sourceDir);
   const origin = `http://127.0.0.1:${server.address().port}`;
   const { chromium } = await loadPlaywright();
-  const browser = await chromium.launch({ args: ['--no-sandbox'] });
+  const browser = await chromium.launch(launchOptions(['--no-sandbox']));
   try {
     const page = await browser.newPage();
     page.on("console", (m) => console.log("  [browser]", m.text()));

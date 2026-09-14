@@ -21,6 +21,21 @@ const CIVILIAN_COLOR = 0xcfc6ad;
 
 const KIND_LABEL = { suspect: '용의자', hvt: '주요 용의자', civilian: '민간인' };
 
+/* --------------------------------------------------------------------------
+ *  장구류
+ *
+ *  야간 작전이라 사람의 실루엣만으로는 대원/용의자/민간인을 구분할 수 없다.
+ *  구분이 안 되면 두 가지가 동시에 깨진다. 적이 어디 있는지 못 보고, 민간인을
+ *  쏘게 된다. 그래서 모델 위에 방탄조끼와 어깨띠를 얹어 역할을 읽게 만든다.
+ *  어깨띠는 스스로 빛나므로(emissive) 광원이 없는 복도에서도 보인다.
+ * ----------------------------------------------------------------------- */
+const GEAR = {
+  teammate: { carrier: 0x252b33, band: 0x5b8fd6, helmet: 0x22272e },
+  suspect: { carrier: 0x2f3128, band: 0xff6a3c, helmet: null },
+  hvt: { carrier: 0x1d1d1f, band: 0xff3b28, helmet: 0x1b1b1d },
+  civilian: { carrier: null, band: 0x86e3ff, helmet: null },
+};
+
 /* ========================================================================== *
  *  보간 버퍼 - {t, x, y, z, yaw} 스냅샷을 모아두고 과거 시점을 재생한다
  * ========================================================================== */
@@ -108,6 +123,7 @@ class Avatar {
     this.group.add(body);
     this.body = body;
     this.rig = new CharacterRig(body, body.userData.isPlaceholder ? [] : assets.animations('character'));
+    this.gear = attachGear(body, GEAR[kind] || GEAR.suspect);
 
     if (armed) {
       this.weapon = assets.instance(weapon);
@@ -163,8 +179,9 @@ class Avatar {
     });
     if (this.weapon) {
       this.weapon.visible = !surrendered && visible;
-      if (this.weapon.visible) this.rig.alignWeapon(this.weapon, this.group, this.gripOffset);
+      if (this.weapon.visible) this.rig.alignWeapon(this.weapon, this.group, this.gripOffset, dt);
     }
+    for (const piece of this.gear) piece.visible = visible;
 
     // 사망/쓰러짐은 모델을 지우지 않고 사망 동작으로 남긴다.
     this.group.visible = visible || this.rig.dead;
@@ -183,7 +200,81 @@ class Avatar {
     });
     this.nameTag.material.map.dispose();
     this.nameTag.material.dispose();
+    // 어깨 표식 두 개는 재질을 공유한다. 같은 재질을 두 번 해제하지 않는다.
+    const released = new Set();
+    for (const piece of this.gear) {
+      piece.geometry.dispose();
+      if (released.has(piece.material)) continue;
+      released.add(piece.material);
+      piece.material.dispose();
+    }
   }
+}
+
+/**
+ * 뼈에 장구류를 붙인다.
+ *
+ * 캐릭터 모델은 1.8m 에 맞추느라 크게 축소·확대되어 있어서, 뼈 밑에 그냥
+ * 붙이면 상자가 그 배율만큼 같이 일그러진다. 그래서 뼈의 월드 배율을 재서
+ * 역수를 곱하고, 원하는 위치도 뼈 좌표계로 변환해서 넣는다. 붙이고 나면
+ * 동작을 재생할 때 가슴/어깨를 따라 자연스럽게 움직인다.
+ *
+ * @returns 붙인 메시 배열 (없으면 빈 배열)
+ */
+function attachGear(body, spec) {
+  const pieces = [];
+  body.updateMatrixWorld(true);
+  const bone = (name) => body.getObjectByName(name);
+  const scaleOf = (target) => {
+    const s = target.getWorldScale(new THREE.Vector3()).x;
+    return Number.isFinite(s) && Math.abs(s) > 1e-6 ? s : 1;
+  };
+  /** local 은 아바타(발밑 원점, -Z 정면) 기준 미터 단위 위치. */
+  const put = (boneName, geometry, material, local) => {
+    const target = bone(boneName);
+    if (!target) return;
+    const mesh = new THREE.Mesh(geometry, material);
+    mesh.scale.setScalar(1 / scaleOf(target));
+    mesh.position.copy(target.worldToLocal(local.clone()));
+    // 뼈마다 로컬 축 규약이 다르다. 뼈의 월드 회전을 상쇄해 두면 장구류는
+    // 항상 아바타 기준(+Y 위, -Z 정면)으로 놓인다.
+    mesh.quaternion.copy(target.getWorldQuaternion(new THREE.Quaternion()).invert());
+    mesh.castShadow = true;
+    mesh.frustumCulled = false;
+    target.add(mesh);
+    pieces.push(mesh);
+  };
+
+  if (spec.carrier) {
+    put('mixamorigSpine2',
+      new THREE.BoxGeometry(0.40, 0.44, 0.26),
+      new THREE.MeshStandardMaterial({ color: spec.carrier, roughness: 0.92, metalness: 0.05 }),
+      new THREE.Vector3(0, 1.33, 0.01));
+    // 탄창 파우치 - 가슴 앞 가로줄
+    for (const x of [-0.11, 0.11]) {
+      put('mixamorigSpine2',
+        new THREE.BoxGeometry(0.10, 0.14, 0.07),
+        new THREE.MeshStandardMaterial({ color: 0x15161a, roughness: 0.95 }),
+        new THREE.Vector3(x, 1.26, -0.16));
+    }
+  }
+  if (spec.helmet) {
+    put('mixamorigHead',
+      new THREE.SphereGeometry(0.125, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.62),
+      new THREE.MeshStandardMaterial({ color: spec.helmet, roughness: 0.7, metalness: 0.15 }),
+      new THREE.Vector3(0, 1.665, -0.01));
+  }
+  if (spec.band) {
+    // 어깨 표식. 팔뼈의 축 방향은 모델마다 다르므로 방향을 타지 않는 구로 만든다.
+    const bandMat = new THREE.MeshStandardMaterial({
+      color: spec.band, emissive: spec.band, emissiveIntensity: 0.9, roughness: 0.6,
+    });
+    for (const [boneName, x] of [['mixamorigLeftArm', 0.175], ['mixamorigRightArm', -0.175]]) {
+      put(boneName, new THREE.SphereGeometry(0.055, 10, 8), bandMat,
+        new THREE.Vector3(x, 1.43, 0));
+    }
+  }
+  return pieces;
 }
 
 /** 캔버스로 이름표 스프라이트를 만든다 */

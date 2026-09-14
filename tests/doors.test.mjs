@@ -6,6 +6,7 @@ import {
 } from '../public/js/map-data.js';
 import {
   DOOR, DoorSet, rollDoorStates, ensureQuietEntry, doorCollider, isBlocking, throughPoint,
+  doorDistance,
 } from '../public/js/doors.js';
 
 const all = (state) => DOORWAYS.map((d) => ({ ...d, state }));
@@ -124,4 +125,57 @@ test('문 사이를 지나는 선분을 찾아낸다 (봇이 열어야 할 문)'
     'hall-library');
   doors.setState('hall-library', DOOR.OPEN);
   assert.equal(doors.blockingBetween(from, to), null);
+});
+
+/* --------------------------------------------------------------------------
+ *  손이 닿는 거리
+ *
+ *  예전에는 문 "중심점"까지의 거리로 쟀다. 정문은 폭이 2.4m 라서, 문 앞에 바짝
+ *  붙어 서 있어도 옆으로 조금만 비켜서면 중심이 2m 넘게 멀어져 안내가 사라졌다.
+ *  화면에 안내가 떴는데 눌러도 안 되는 상황이 없도록, 화면과 서버가 같은 자를
+ *  쓰는지 확인한다.
+ * ----------------------------------------------------------------------- */
+test('넓은 문은 문 폭 안 어디에 서도 손이 닿는다', () => {
+  const doors = new DoorSet(all(DOOR.CLOSED));
+  const front = doors.get('front');
+  assert.ok(front, '정문을 찾지 못했다');
+  assert.ok(front.span >= 2, '정문은 넓은 문이어야 한다');
+
+  // 문 폭의 가장자리에서 1.2m 앞. 중심까지는 1.2m 보다 훨씬 멀다.
+  const edgeX = front.x + front.span / 2 - 0.1;
+  const standZ = front.z + 1.2;
+  assert.ok(Math.hypot(edgeX - front.x, standZ - front.z) > 1.5, '시험 지점이 중심에서 충분히 멀어야 한다');
+  assert.ok(Math.abs(doorDistance(front, edgeX, standZ) - 1.2) < 0.01);
+
+  const near = doors.nearest(edgeX, standZ);
+  assert.equal(near?.door.id, 'front');
+});
+
+test('문에서 멀면 안내가 뜨지 않는다', () => {
+  const doors = new DoorSet(all(DOOR.CLOSED));
+  const front = doors.get('front');
+  // 문 폭 밖으로 4m, 앞으로 4m -> 어떤 자로 재도 닿지 않는다
+  assert.equal(doors.nearest(front.x + front.span / 2 + 4, front.z + 4), null);
+});
+
+test('부서진 문에는 남은 동작이 없다', () => {
+  const doors = new DoorSet(all(DOOR.DESTROYED));
+  for (const door of doors.doors) {
+    assert.deepEqual(doors.available(door), []);
+    assert.equal(doors.resultOf(door, 'open'), null);
+    assert.equal(doors.resultOf(door, 'kick'), null);
+  }
+});
+
+test('안내에 뜨는 동작은 전부 실제로 결과가 있다', () => {
+  for (const state of [DOOR.OPEN, DOOR.CLOSED, DOOR.LOCKED, DOOR.BARRICADED]) {
+    const doors = new DoorSet(all(state));
+    for (const door of doors.doors) {
+      const actions = doors.available(door);
+      assert.ok(actions.length > 0, `${state} 에 할 수 있는 동작이 없다`);
+      for (const action of actions) {
+        assert.ok(doors.resultOf(door, action), `${state} + ${action} 이 아무 결과도 없다`);
+      }
+    }
+  }
 });

@@ -36,6 +36,25 @@ export const DOOR_ACTIONS = {
 export const DOOR_REACH = 1.9;
 const LEAF = 0.16;
 
+/**
+ * (x,z) 에서 문까지의 거리.
+ *
+ * 문 중심까지의 직선 거리로 재면 넓은 정문(폭 2.4m)에서는 문 앞에 바짝 서
+ * 있어도 중심이 멀어서 손이 닿지 않는다고 나온다. 그래서 "문틀 선분"까지의
+ * 거리로 잰다. 문 폭 안에 서 있으면 벽에서 떨어진 거리만 본다.
+ *
+ * 화면(안내 표시)과 서버(검증)가 같은 함수를 쓰므로, 안내가 떴는데 눌리지
+ * 않는 상황이 생기지 않는다.
+ */
+export function doorDistance(door, x, z) {
+  const alongAxis = door.axis === 'x' ? 'z' : 'x';
+  const acrossAxis = door.axis === 'x' ? 'x' : 'z';
+  const point = { x, z };
+  const along = Math.max(0, Math.abs(point[alongAxis] - door[alongAxis]) - door.span / 2);
+  const across = Math.abs(point[acrossAxis] - door[acrossAxis]);
+  return Math.hypot(along, across);
+}
+
 /** 닫힌 문 한 장의 콜라이더. */
 export function doorCollider(door) {
   const base = { x: door.x, z: door.z, y: 0, h: MAP.doorHeight, kind: 'door', id: door.id };
@@ -112,7 +131,7 @@ export class DoorSet {
   nearest(x, z, reach = DOOR_REACH) {
     let best = null, bestD = reach;
     for (const door of this.doors) {
-      const d = Math.hypot(door.x - x, door.z - z);
+      const d = doorDistance(door, x, z);
       if (d < bestD) { best = door; bestD = d; }
     }
     return best && { door: best, distance: bestD };

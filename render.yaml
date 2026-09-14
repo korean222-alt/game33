@@ -11,7 +11,9 @@
 services:
   - type: web
     name: market-raid
-    branch: claude/realistic-gameplay-improvements-ofdtvw
+    # 게임 서버가 배포되는 브랜치. 화면(Vercel)과 반드시 같은 브랜치여야 한다.
+    # 서로 다르면 /health 의 protocol 이 어긋나 게임이 시작되지 않는다.
+    branch: claude/gameplay-bugs-fixes-6j26fu
     runtime: node
     plan: free
     buildCommand: npm install

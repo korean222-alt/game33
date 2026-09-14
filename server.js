@@ -26,6 +26,7 @@ import {
 } from './public/js/map-data.js';
 import {
   DOOR, DoorSet, rollDoorStates, ensureQuietEntry, DOOR_ACTIONS, DOOR_REACH, isBlocking,
+  doorDistance,
 } from './public/js/doors.js';
 import { NOISE, brightnessAt, hasClearShot, inFieldOfView } from './public/js/perception.js';
 import {
@@ -37,7 +38,8 @@ import {
   gasIntensity, startingGrenades,
 } from './public/js/grenades.js';
 import { traceShot, TargetHistory } from './public/js/shot-trace.js';
-import { PHASES, MISSION, OBJECTIVES } from './public/js/mission-story.js';
+import { PHASES, MISSION } from './public/js/mission-story.js';
+import { objectiveReport, phaseComplete, missedObjectives } from './public/js/objectives.js';
 import { scoreMission, gradeAdvice } from './public/js/scoring.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -363,15 +365,24 @@ function makeWorld(room, dt, io) {
         return;
       }
       const dmg = Math.round(SUSPECT_DAMAGE * diff.dmgMul * (0.85 + Math.random() * 0.35));
-      damagePlayer(room, player, dmg, npc.id, io);
+      damagePlayer(room, player, dmg, npc.id, io, npc);
     },
     onStateChange: (npc) => { npc.dirty = true; },
-    onContact: (npc) => {
+    onContact: (npc, target) => {
       // 발견을 외치면 주변 동료도 경계에 들어간다.
       for (const other of room.suspects) {
         if (other === npc || !other.alive) continue;
         if (dist2D(other, npc) > 16) continue;
         other.lastHeard = { x: npc.lastSeen?.x ?? npc.x, z: npc.lastSeen?.z ?? npc.z, t, level: 0.5, type: 'contact' };
+      }
+      // 발각된 대원에게는 어느 쪽에서 발각됐는지 알린다. 밤이라 사람이 먼저
+      // 보이지 않는 경우가 많아서, 이 신호가 없으면 총알이 어디서 오는지
+      // 알 방법이 없다.
+      if (target?.id) {
+        io.to(target.id).emit('spotted', {
+          id: npc.id, kind: npc.kind,
+          x: +npc.x.toFixed(2), z: +npc.z.toFixed(2),
+        });
       }
     },
     onSurrender: (npc) => {
@@ -409,10 +420,14 @@ function updateDoorQueue(room, io) {
 /* ========================================================================== *
  *  피해 / 사망
  * ========================================================================== */
-function damagePlayer(room, player, dmg, byId, io) {
+function damagePlayer(room, player, dmg, byId, io, from = null) {
   if (!player.alive) return;
   player.hp = Math.max(0, player.hp - dmg);
-  io.to(room.code).emit('playerHit', { id: player.id, hp: player.hp, dmg, by: byId });
+  io.to(room.code).emit('playerHit', {
+    id: player.id, hp: player.hp, dmg, by: byId,
+    // 맞은 방향. 어두운 실내에서 사수를 못 봤을 때 유일한 단서다.
+    ...(from ? { fx: +from.x.toFixed(2), fz: +from.z.toFixed(2) } : {}),
+  });
 
   if (player.hp === 0) {
     player.alive = false;
@@ -572,7 +587,7 @@ function explode(room, grenade, io) {
     for (const p of room.players.values()) {
       if (!p.alive) continue;
       const dmg = fragDamage(at, p, colliders);
-      if (dmg > 0) damagePlayer(room, p, dmg, grenade.by, io);
+      if (dmg > 0) damagePlayer(room, p, dmg, grenade.by, io, at);
     }
     for (const npc of room.npcs) {
       if (!npc.alive) continue;
@@ -739,78 +754,6 @@ function shout(room, player, io) {
 /* ========================================================================== *
  *  목표와 단계
  * ========================================================================== */
-function objectiveState(room, id) {
-  const suspects = room.suspects;
-  const neutralised = (s) => !s.alive || s.arrested || s.state === 'surrender';
-  switch (id) {
-    case 'perimeter': {
-      const outdoor = suspects.filter((s) => s.origin === 'outdoor');
-      return { done: outdoor.every(neutralised), have: outdoor.filter(neutralised).length, need: outdoor.length };
-    }
-    case 'breach':
-      return { done: room.flags.breached, have: room.flags.breached ? 1 : 0, need: 1 };
-    case 'civilians': {
-      const list = room.civilians.filter((c) => !c.hostage);
-      const handled = list.filter((c) => c.secured || !c.alive);
-      return { done: list.length > 0 && handled.length === list.length, have: handled.length, need: list.length };
-    }
-    case 'devices': {
-      const done = room.sites.filter((s) => s.defused).length;
-      return { done: done === room.sites.length, have: done, need: room.sites.length };
-    }
-    case 'hvt': {
-      const hvt = room.npcs.find((n) => n.kind === 'hvt');
-      const done = !hvt || neutralised(hvt);
-      return { done, have: done ? 1 : 0, need: 1 };
-    }
-    case 'hostage': {
-      const hostage = room.npcs.find((n) => n.id === 'hostage');
-      const done = !!hostage && hostage.alive;
-      return { done, have: done ? 1 : 0, need: 1, failed: !!hostage && !hostage.alive };
-    }
-    case 'suspects': {
-      const list = suspects.filter((s) => !s.reinforcement);
-      const handled = list.filter(neutralised);
-      return { done: handled.length === list.length, have: handled.length, need: list.length };
-    }
-    case 'extract': {
-      const standing = room.standingPlayers;
-      const inZone = standing.filter((p) => dist2D(p, EXTRACTION) <= EXTRACTION.radius);
-      const done = standing.length > 0 && inZone.length === standing.length;
-      return { done, have: inZone.length, need: Math.max(1, standing.length) };
-    }
-    case 'evidence': {
-      const taken = room.evidence.filter((e) => e.taken).length;
-      return { done: taken === room.evidence.length, have: taken, need: room.evidence.length };
-    }
-    case 'quiet':
-      return { done: room.stats.civiliansLost === 0 && !room.stats.hostageLost, have: 0, need: 0 };
-    case 'arrests':
-      return { done: room.stats.suspectsArrested >= room.stats.suspectsNeutralised, have: room.stats.suspectsArrested, need: 0 };
-    default:
-      return { done: false, have: 0, need: 1 };
-  }
-}
-
-function objectiveReport(room) {
-  const phase = PHASES[room.phase];
-  return {
-    phase: room.phase,
-    id: phase.id,
-    name: phase.name,
-    title: phase.title,
-    hint: phase.hint,
-    list: phase.show.map((id) => {
-      const state = objectiveState(room, id);
-      const done = state.done || room.objectiveDone.has(id);
-      return {
-        id, label: OBJECTIVES[id]?.label || id, kind: OBJECTIVES[id]?.kind || 'primary',
-        done, have: state.have, need: state.need, failed: !!state.failed,
-      };
-    }),
-  };
-}
-
 function updateObjectives(room, dt, io) {
   // 실내 진입 기록
   if (!room.flags.breached && room.standingPlayers.some((p) => isIndoors(p.x, p.z))) {
@@ -866,12 +809,7 @@ function updateObjectives(room, dt, io) {
   }
 
   // 단계 진행
-  const phase = PHASES[room.phase];
-  const states = phase.require.map((id) => ({ id, ...objectiveState(room, id) }));
-  for (const s of states) if (s.done) room.objectiveDone.add(s.id);
-  const complete = states.every((s) => s.done || room.objectiveDone.has(s.id));
-
-  if (complete) {
+  if (phaseComplete(room)) {
     room.stats.phasesCleared = room.phase + 1;
     if (room.phase === PHASES.length - 1) {
       room.stats.completed = true;
@@ -929,13 +867,7 @@ function finishMatch(room, result, io) {
   room.state = result;
   if (room.timer) { clearInterval(room.timer); room.timer = null; }
 
-  // 남긴 목표 계산
-  let missed = 0;
-  for (let i = room.phase; i < PHASES.length; i++) {
-    for (const id of PHASES[i].require) if (!room.objectiveDone.has(id) && !objectiveState(room, id).done) missed++;
-  }
-  missed += room.evidence.filter((e) => !e.taken).length;
-  room.stats.objectivesMissed = missed;
+  room.stats.objectivesMissed = missedObjectives(room);
   room.stats.teamLost = [...room.players.values()].filter((p) => !p.alive).length;
   const hostage = room.npcs.find((n) => n.id === 'hostage');
   if (hostage?.alive) room.stats.hostageSaved = true;
@@ -1294,7 +1226,9 @@ io.on('connection', (socket) => {
     if (!me || !room || room.state !== 'active' || !me.alive) return cb?.({ ok: false });
     const door = room.doors.get(id);
     if (!door) return cb?.({ ok: false, error: 'no-door' });
-    if (dist2D(me, door) > DOOR_REACH + 0.6) return cb?.({ ok: false, error: 'far' });
+    // 화면의 안내와 같은 자(doorDistance)로 잰다. 여유 0.6m 는 입력이 서버에
+    // 닿는 사이에 움직인 만큼을 봐 주는 값이다.
+    if (doorDistance(door, me.x, me.z) > DOOR_REACH + 0.6) return cb?.({ ok: false, error: 'far' });
     const spec = DOOR_ACTIONS[action];
     const next = room.doors.resultOf(door, action);
     if (!spec || !next) return cb?.({ ok: false, error: 'not-allowed' });

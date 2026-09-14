@@ -9,7 +9,9 @@
     "dev": "node --watch server.js",
     "build:static": "node scripts/build-static.mjs",
     "import:models": "node scripts/import-models.mjs",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "swap:character": "node scripts/swap-character.mjs",
+    "import:animations": "node scripts/import-animations.mjs"
   },
   "dependencies": {
     "express": "^4.19.2",

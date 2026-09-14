@@ -23,6 +23,12 @@ import { roomMaterials, dressRoom } from './visuals.js';
  */
 const LIGHT_INTENSITY_SCALE = 4;
 const DOOR_THICKNESS = 0.07;
+/* 벽 꼭대기를 천장보다 이만큼 더 올려서 그린다.
+ * 벽의 윗면(y = MAP.height)과 천장면(y = MAP.height)이 정확히 겹치면 깊이 값이
+ * 같아져서, 카메라가 움직일 때마다 어느 쪽이 앞인지 뒤집히며 천장이 깨져 보인다
+ * (z-fighting). 벽을 천장 위로 조금 더 올려 두 면이 겹치는 일 자체를 없앤다.
+ * 충돌 판정은 map-data 의 원본 높이를 쓰므로 게임플레이는 그대로다. */
+const CEILING_OVERLAP = 0.08;
 
 export class World {
   constructor(renderer, assets) {
@@ -76,7 +82,7 @@ export class World {
       this.materials.floor,
     );
     floor.rotation.x = -Math.PI / 2;
-    floor.position.y = 0.004;
+    floor.position.y = 0.02;
     const floorUV = floor.geometry.attributes.uv;
     for (let k = 0; k < floorUV.count; k++) {
       floorUV.setXY(k, floorUV.getX(k) * (i.maxX - i.minX) / 4, floorUV.getY(k) * (i.maxZ - i.minZ) / 4);
@@ -90,7 +96,7 @@ export class World {
       new THREE.MeshStandardMaterial({ color: 0x2c2d2c, roughness: 0.92 }),
     );
     drive.rotation.x = -Math.PI / 2;
-    drive.position.set(0, 0.006, 26);
+    drive.position.set(0, 0.012, 26);
     drive.receiveShadow = true;
     this.scene.add(drive);
 
@@ -108,7 +114,9 @@ export class World {
       new THREE.BoxGeometry(i.maxX - i.minX + 1.2, 0.6, i.maxZ - i.minZ + 1.2),
       new THREE.MeshStandardMaterial({ color: 0x2a2622, roughness: .85 }),
     );
-    roof.position.y = MAP.height + 0.35; // 5 cm clearance above the ceiling; no coplanar underside.
+    // 지붕 밑면은 천장(MAP.height)보다 20cm 위. 위로 늘린 벽 꼭대기보다도 높아서
+    // 어느 면과도 같은 높이에 놓이지 않는다.
+    roof.position.y = MAP.height + 0.5;
     roof.castShadow = true;
     this.scene.add(roof);
 
@@ -136,6 +144,8 @@ export class World {
       const bands = base > 0 || w.h < 3.4
         ? [{ bottom: base, top: base + w.h, material: base > 0 ? 'wall' : 'plaster' }]
         : wallSections(w.h).map((s) => ({ ...s }));
+      const ceilingTop = Math.abs(base + w.h - MAP.height) < 0.001;
+      if (ceilingTop) bands[bands.length - 1].top += CEILING_OVERLAP;
       for (const section of bands) {
         const height = section.top - section.bottom;
         if (height <= 0.001) continue;

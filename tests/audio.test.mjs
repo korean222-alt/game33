@@ -26,8 +26,13 @@ test('sounds wait for a gesture; reloads and active voices cancel on mute/dispos
   const audio = new GameAudio({ contextFactory: () => { created++; return ctx; } });
   audio.shot(); assert.equal(created, 0);
   await audio.unlock(); assert.equal(ctx.state, 'running');
-  audio.shot(); assert.equal(audio.sources.size, 3);
-  audio.reload(2); assert.equal(audio.reloadSources.size, 4);
+  // 내 총: 총구음 + 저역 충격 + 금속음 + 잔향 + 탄피 2 = 6겹
+  audio.shot(); assert.equal(audio.sources.size, 6);
+  audio.stop();
+  // 남의 총: 탄피는 그 자리에서만 들린다 -> 4겹
+  audio.shot('rifle', { x: 6, y: 1.6, z: 0 }); assert.equal(audio.sources.size, 4);
+  audio.stop();
+  audio.reload(2); assert.equal(audio.reloadSources.size, 5);
   const reload = [...audio.reloadSources];
   audio.cancelReload(); assert.ok(reload.every(source => source.stopped));
   assert.equal(audio.reloadSources.size, 0);
@@ -54,5 +59,36 @@ test('remote gunfire pans relative to the listener and walls muffle it', async (
 
 test('unsupported audio never prevents a game from starting', async () => {
   const audio = new GameAudio({ contextFactory: () => null });
-  await audio.unlock(); audio.shot(); audio.reload(); audio.door({ x: 1, z: 1 }); audio.dispose();
+  await audio.unlock();
+  for (const play of [
+    () => audio.shot(), () => audio.reload(), () => audio.door({ x: 1, z: 1 }, 'kick'),
+    () => audio.dryFire(), () => audio.impact({ x: 1, y: 1, z: 1 }), () => audio.hurt(),
+    () => audio.contact({ x: 2, y: 1, z: 2 }), () => audio.blast('flash', { x: 1, y: 0, z: 1 }),
+    () => audio.bounce(), () => audio.footstep({ crouch: true }),
+  ]) play();
+  audio.dispose();
+});
+
+test('문 동작마다 다른 소리가 나고, 강제 개방이 가장 크다', async () => {
+  const ctx = context(), audio = new GameAudio({ contextFactory: () => ctx });
+  await audio.unlock();
+  const layers = (action) => { audio.stop(); audio.door({ x: 0, z: 0 }, action); return audio.sources.size; };
+  assert.equal(layers('peek'), 1);          // 문틈 확인은 거의 소리가 없다
+  assert.equal(layers('open'), 3);
+  assert.equal(layers('close'), 4);         // 닫을 때는 마지막에 닫히는 소리가 더 붙는다
+  assert.equal(layers('kick'), 3);
+  assert.equal(layers('unlock'), 4);        // 해정은 걸쇠를 네 번 건드린다
+  audio.dispose();
+});
+
+test('내가 맞은 소리와 발각 경고는 위치에 따라 좌우가 갈린다', async () => {
+  const ctx = context(), audio = new GameAudio({ contextFactory: () => ctx });
+  await audio.unlock();
+  audio.setListener({ x: 0, y: 1.6, z: 0 }, 0);
+  audio.hurt();
+  assert.ok(audio.sources.size > 0);
+  audio.stop();
+  const bus = audio._bus({ x: -4, y: 1.6, z: 0 });
+  assert.ok(bus.nodes[2].pan.value < -0.99, '왼쪽에서 난 소리가 왼쪽에서 들려야 한다');
+  audio.dispose();
 });

@@ -3,6 +3,13 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
 
+/* 설치된 Playwright 버전과 미리 받아 둔 Chromium 버전이 어긋나면 실행 파일을
+ * 못 찾는다. CHROMIUM_PATH 로 직접 지정할 수 있게 열어 둔다. */
+const launchOptions = (args) => ({
+  args,
+  ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}),
+});
+
 const server = spawn(process.execPath, ['server.js'], {
   cwd: new URL('..', import.meta.url), env: { ...process.env, PORT: '3191' },
   stdio: ['ignore', 'pipe', 'pipe'],
@@ -20,7 +27,7 @@ try {
     server.once('error', error => { clearTimeout(timer); reject(error); });
     server.once('exit', code => { clearTimeout(timer); reject(new Error('Server exit: ' + code)); });
   });
-  browser = await chromium.launch({ args: ['--no-sandbox', '--enable-unsafe-swiftshader'] });
+  browser = await chromium.launch(launchOptions(['--no-sandbox', '--enable-unsafe-swiftshader']));
   page = await browser.newPage({ viewport: { width: 960, height: 640 } });
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
@@ -79,6 +86,50 @@ try {
     assert.ok(npc.offset < 1);
   }
   assert.equal(start.glError, 0);
+
+  stage = 'ceiling separation and weapon grip';
+  const render = await page.evaluate(async () => {
+    const game = window.__mr, THREE = await import('three');
+    const { MAP } = await import('/js/map-data.js');
+    game.world.scene.updateMatrixWorld(true);
+
+    // 천장과 같은 높이로 끝나는 면이 있으면 카메라가 움직일 때마다 깨져 보인다.
+    let coplanar = 0, ceilings = 0;
+    for (const object of game.world.scene.children) {
+      if (!object.isMesh || !object.geometry?.attributes?.position) continue;
+      const box = new THREE.Box3().setFromObject(object);
+      if (Math.abs(box.max.y - box.min.y) < 0.01 && Math.abs(box.max.y - MAP.height) < 0.001) {
+        ceilings++;               // 천장면 자체
+        continue;
+      }
+      if (Math.abs(box.max.y - MAP.height) < 0.002) coplanar++;
+    }
+
+    // 총을 든 자세: 손에 붙어 있고, 총 윗면이 위를 향해야 한다.
+    const guns = [];
+    for (const avatar of game.entities.npcs.values()) {
+      if (!avatar.weapon) continue;
+      avatar.group.updateMatrixWorld(true);
+      const hand = avatar.rig.bones.rightHand;
+      const gun = avatar.weapon.getWorldPosition(new THREE.Vector3());
+      const up = new THREE.Vector3(0, 1, 0)
+        .applyQuaternion(avatar.weapon.getWorldQuaternion(new THREE.Quaternion()));
+      guns.push({
+        toHand: hand ? gun.distanceTo(hand.getWorldPosition(new THREE.Vector3())) : null,
+        up: up.y, y: gun.y, gear: avatar.gear.length,
+      });
+    }
+    return { coplanar, ceilings, guns };
+  });
+  assert.equal(render.ceilings > 0, true, '천장이 있어야 한다');
+  assert.equal(render.coplanar, 0, `천장과 같은 높이로 끝나는 면 ${render.coplanar}개 (깜빡임의 원인)`);
+  assert.ok(render.guns.length > 0, '무장한 NPC 가 있어야 한다');
+  for (const gun of render.guns) {
+    assert.ok(gun.toHand === null || gun.toHand < 0.45, `총이 손에서 떨어졌다: ${gun.toHand}`);
+    assert.ok(gun.up > 0.5, `총이 눕거나 뒤집혔다: ${gun.up}`);
+    assert.ok(gun.y > 0.7, `총이 발밑에 있다: ${gun.y}`);
+    assert.ok(gun.gear >= 5, `장구류가 안 붙었다: ${gun.gear}`);
+  }
 
   stage = 'door input';
   // Real keyboard -> Input -> Game -> Socket.io -> server -> world state.

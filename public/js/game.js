@@ -13,8 +13,8 @@
 
 import * as THREE from 'three';
 import { QUALITY, NET, PLAYER, loadSettings, saveSettings, guessQuality } from './config.js';
-import { rayObstacleDistance } from './map-data.js';
-import { DoorSet, rollDoorStates, DOOR_REACH } from './doors.js';
+import { rayObstacleDistance, isIndoors } from './map-data.js';
+import { DOOR, DoorSet, rollDoorStates, DOOR_REACH } from './doors.js';
 import { GRENADE_ORDER, GRENADES, startingGrenades } from './grenades.js';
 import { AssetManager } from './assets.js';
 import { World } from './world.js';
@@ -191,6 +191,16 @@ export class Game {
       this.hp = d.hp;
       this.hud.setHp(d.hp);
       this.hud.flashDamage();
+      this.audio?.hurt();
+      if (Number.isFinite(d.fx)) this.hud.threat(this._bearingTo(d.fx, d.fz), 'hit', 1600);
+    });
+
+    // 용의자가 나를 발견했다. 총알보다 먼저 오는 유일한 경고다.
+    s.on('spotted', (d) => {
+      if (!this.matchActive || !this.alive) return;
+      this.hud.threat(this._bearingTo(d.x, d.z), 'spot', 1900);
+      this.hud.banner('발각됨 — 접촉', 1400);
+      this.audio?.contact({ x: d.x, y: 1.5, z: d.z });
     });
 
     s.on('playerDown', (d) => {
@@ -247,11 +257,17 @@ export class Game {
     });
 
     s.on('doorState', (d) => {
-      if (this.doors.get(d.id)?.state !== d.state) this.audio?.door(this.doors.get(d.id));
+      const door = this.doors.get(d.id);
+      if (door && door.state !== d.state) {
+        this.audio?.door(door, d.state === DOOR.DESTROYED ? 'kick' : d.state === DOOR.OPEN ? 'open' : 'close');
+      }
       this.doors.setState(d.id, d.state);
       this.world.setDoorState(d.id, d.state);
     });
     s.on('doorAction', (d) => {
+      // 남이 문을 차는 소리도 들려야 한다. 위치는 그 문이다.
+      const door = this.doors.get(d.id);
+      if (door) this.audio?.door(door, d.action);
       if (d.by !== this.myId) return;
       this._doorBusyUntil = performance.now() + d.seconds * 1000;
       this._doorBusyTotal = d.seconds * 1000;
@@ -263,8 +279,12 @@ export class Game {
     s.on('grenadeExploded', (d) => {
       this.entities.effects.removeGrenade(d.id);
       this.entities.effects.blast(d, d.type);
+      this.audio?.blast(d.type, d, this._occluded(d));
     });
-    s.on('gasCloud', (d) => this.entities.effects.gas(d.id, d, d.seconds));
+    s.on('gasCloud', (d) => {
+      this.entities.effects.gas(d.id, d, d.seconds);
+      this.audio?.blast('gas', d);
+    });
     s.on('gasCleared', (d) => this.entities.effects.clearGas(d.id));
     s.on('flashed', (d) => {
       this.blindUntil = performance.now() + d.seconds * 1000;
@@ -344,6 +364,8 @@ export class Game {
     this.downed = false;
     this.hp = 100;
     this.reloading = false;
+    this._reloadAcked = false;
+    this._reloadSentAt = 0;
     this._defusingSite = null;
     this._matchVersion++;
     this.shots.reset();
@@ -422,8 +444,16 @@ export class Game {
     this.ammo = this.shots.ammo;
     this.entities.applyShotPredictions(this.shots.pending);
     this.reserve = me.reserve;
-    if (this.reloading && !me.reloading) this.audio?.cancelReload();
-    this.reloading = !!me.reloading;
+    // 장전 소리가 시작하자마자 끊기던 문제.
+    // 장전을 요청하면 화면은 바로 "장전 중" 으로 바꾸지만, 그 직후 도착하는
+    // 스냅샷은 아직 요청이 반영되기 전 상태(reloading=0)다. 그걸 "장전이
+    // 취소됐다" 로 읽어서 소리를 즉시 멈추고 있었다. 서버가 한 번이라도
+    // 장전 중이라고 알려 준 뒤에만 취소로 본다.
+    if (me.reloading) this._reloadAcked = true;
+    const awaitingAck = this.reloading && !this._reloadAcked
+      && performance.now() - (this._reloadSentAt || 0) < RELOAD_ACK_GRACE;
+    if (this.reloading && !me.reloading && !awaitingAck) this.audio?.cancelReload();
+    this.reloading = !!me.reloading || awaitingAck;
     this.hp = me.hp;
     if (!me.alive) this.audio?.cancelReload();
     this.gas = me.gas || 0;
@@ -503,6 +533,7 @@ export class Game {
     // 이동 예측
     this.player.update(dt, input);
     this.audio?.setListener(this.camera.position, this.player.yaw);
+    this._stepAudio(dt);
     this.hud.setAim(this.player.adsAmount, this.player.weapon, this.alive && !blinded);
     this.hud.setFlash(blinded ? Math.min(1, (this.blindUntil - now) / (this._blindTotal || 1) * 1.4) : 0);
     this.hud.setGas(this.gas);
@@ -543,7 +574,7 @@ export class Game {
     if (!w || !this.matchActive || !this.alive || !this.socket.connected) return;
     if (now - this._lastShotAt < 60000 / w.rpm) return;
     if (this.reloading || this.ammo <= 0) {
-      if (this.ammo <= 0 && !this.reloading) this._tryReload();
+      if (this.ammo <= 0 && !this.reloading) { this.audio?.dryFire(); this._tryReload(); }
       return;
     }
     this._lastShotAt = now;
@@ -565,12 +596,14 @@ export class Game {
     this.ammo = this.shots.ammo;
     this.hud.setAmmo(this.ammo, this.reserve, false, this.weaponName);
     this.player.kick();
-    this.audio?.shot(this.player.weapon);
+    this.audio?.shot(this.player.weapon, null, false, isIndoors(this.player.pos.x, this.player.pos.z));
     this.player.addShotSpread();
     // 느린 연결에서도 조준한 곳까지 즉시 그린다.
     const impact = new THREE.Vector3(origin.x, origin.y, origin.z).addScaledVector(dir, predicted.dist);
+    const impactPoint = impact.clone();
     const tracer = impact.sub(new THREE.Vector3(from.x, from.y, from.z));
     this.entities.effects.shot(from, tracer.clone().normalize(), tracer.length());
+    if (!predicted.hit) this.audio?.impact(impactPoint);
     if (predicted.hit) this.hud.flashHit();
     this.entities.applyShotPredictions(this.shots.pending);
 
@@ -602,6 +635,8 @@ export class Game {
     const w = this.weapons?.[this.player.weapon];
     if (!w || this.reloading || this.ammo >= w.mag || this.reserve <= 0) return;
     this.reloading = true;
+    this._reloadAcked = false;
+    this._reloadSentAt = performance.now();
     this.hud.setAmmo(this.ammo, this.reserve, true, this.weaponName);
     this.audio?.reload(w.reload);
     this.socket.emit('reload');
@@ -652,15 +687,24 @@ export class Game {
     }
     const door = near.door;
     const actions = this.doors.available(door);
+    // 부서진 문에는 할 수 있는 것이 없다. 안내를 띄우면 눌러도 반응이 없다.
+    if (actions.length === 0) {
+      this.hud.setDoor(null);
+      input.consumeDoor(); input.consumeKick();
+      return;
+    }
     const primary = actions.includes('open') ? 'open'
       : actions.includes('close') ? 'close'
         : actions.includes('unlock') ? 'unlock' : null;
+    const available = {
+      primary, peek: actions.includes('peek'), kick: actions.includes('kick'),
+    };
     const hint = busy ? '작업 중…'
-      : [primary ? `${isTouchDevice ? '문' : 'E'} ${PRIMARY_LABEL[primary]}` : null,
-        actions.includes('peek') ? `${isTouchDevice ? '확인' : 'Q'} 문틈 확인` : null,
-        actions.includes('kick') ? `${isTouchDevice ? '돌입' : 'B'} 강제 개방(시끄럽다)` : null]
+      : [primary ? `${isTouchDevice ? PRIMARY_LABEL[primary] : `E ${PRIMARY_LABEL[primary]}`}` : null,
+        available.peek ? `${isTouchDevice ? '문틈 확인' : 'Q 문틈 확인'}` : null,
+        available.kick ? `${isTouchDevice ? '강제 개방' : 'B 강제 개방'}(시끄럽다)` : null]
         .filter(Boolean).join(' · ');
-    this.hud.setDoor(door, hint);
+    this.hud.setDoor(door, hint, available);
 
     if (busy) { input.consumeDoor(); input.consumeKick(); return; }
 
@@ -697,14 +741,46 @@ export class Game {
     });
   }
 
-  _remoteGunshot(weapon, position) {
+  /** 내 시점 기준으로 (x,z) 가 어느 쪽인지. 0 = 정면, + = 오른쪽 (라디안). */
+  _bearingTo(x, z) {
+    const dx = x - this.player.pos.x, dz = z - this.player.pos.z;
+    if (Math.hypot(dx, dz) < 0.05) return 0;
+    const yaw = this.player.yaw;
+    const forward = dx * -Math.sin(yaw) + dz * -Math.cos(yaw);
+    const right = dx * Math.cos(yaw) + dz * -Math.sin(yaw);
+    return Math.atan2(right, forward);
+  }
+
+  /**
+   * 발소리. 걸은 거리로 박자를 잡는다(시간이 아니라 거리라서 속도가 바뀌어도
+   * 보폭이 일정하다). 앉아서 움직이면 거의 들리지 않는다 - 조용히 접근할 수
+   * 있다는 규칙이 소리로도 지켜져야 한다.
+   */
+  _stepAudio(dt) {
+    if (!this.alive || !this.player.onGround) return;
+    const speed = Math.hypot(this.player.vel.x, this.player.vel.z);
+    if (speed < 0.4) { this._stepDistance = 0; return; }
+    this._stepDistance = (this._stepDistance || 0) + speed * dt;
+    const stride = this.player.crouching ? 1.0 : this.player.sprinting ? 2.1 : 1.65;
+    if (this._stepDistance < stride) return;
+    this._stepDistance = 0;
+    this.audio?.footstep({ crouch: this.player.crouching, sprint: this.player.sprinting });
+  }
+
+  /** 소리가 나는 지점과 내 귀 사이에 벽이 있는가. 있으면 먹먹하게 들린다. */
+  _occluded(position) {
     const listener = this.camera.position;
-    const dx = listener.x - position.x, dy = listener.y - position.y, dz = listener.z - position.z;
+    const dx = listener.x - position.x, dy = listener.y - (position.y ?? 0), dz = listener.z - position.z;
     const distance = Math.hypot(dx, dy, dz);
-    const blocked = distance > 0.01 && rayObstacleDistance(position,
+    if (distance <= 0.01) return false;
+    return rayObstacleDistance(position,
       { x: dx / distance, y: dy / distance, z: dz / distance },
       distance, this.doors.colliders()) < distance - 0.05;
-    this.audio?.shot(weapon, position, blocked);
+  }
+
+  _remoteGunshot(weapon, position) {
+    this.audio?.shot(weapon, position, this._occluded(position),
+      isIndoors(this.camera.position.x, this.camera.position.z));
   }
 
   /* ---- 해체 / 체포 / 확보 / 소생 ---------------------------------------- */
@@ -795,3 +871,5 @@ export class Game {
 }
 
 const PRIMARY_LABEL = { open: '열기', close: '닫기', unlock: '해정 시도' };
+/* 장전 요청이 서버에 닿아 스냅샷에 반영될 때까지 기다려 주는 시간(ms). */
+const RELOAD_ACK_GRACE = 700;

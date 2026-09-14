@@ -1,7 +1,7 @@
 name: Gameplay regression
 on:
   push:
-    branches: [main, claude/realistic-gameplay-improvements-ofdtvw]
+    branches: [main, claude/realistic-gameplay-improvements-ofdtvw, claude/gameplay-bugs-fixes-6j26fu]
   pull_request:
 permissions:
   contents: read

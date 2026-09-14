@@ -12,7 +12,14 @@
 
 import * as THREE from 'three';
 
-const X_AXIS = new THREE.Vector3(1, 0, 0);
+const UP = new THREE.Vector3(0, 1, 0);
+/* 두 손 사이가 이 범위를 벗어나면 총을 잡은 자세가 아니다(달리기/포복/사망 클립). */
+const GRIP_SPAN_MIN = 0.13;
+const GRIP_SPAN_MAX = 0.82;
+/* 총을 잡지 않은 자세에서 쓰는 "내린 총" 방향(몸 기준, -Z 가 정면). */
+const LOW_READY = new THREE.Vector3(0, -0.42, -1).normalize();
+/* 뼈대가 없는 placeholder 에 총을 들릴 때 쓰는 손 위치(몸 기준). */
+const FALLBACK_HAND = new THREE.Vector3(0.19, 1.24, -0.12);
 const WALK_SCALE = 0.62;          // 달리기 클립을 늦춰서 걷기로 쓴다
 const SPRINT_SPEED = 4.6;
 const RUN_SPEED = 2.1;
@@ -61,7 +68,15 @@ export class CharacterRig {
     this.handsUp = 0;
     this._tmpA = new THREE.Vector3();
     this._tmpB = new THREE.Vector3();
+    this._tmpC = new THREE.Vector3();
     this._tmpQ = new THREE.Quaternion();
+    // 총기 정렬용. 매 프레임 새로 만들지 않는다.
+    this._muzzle = null;
+    this._axisX = new THREE.Vector3();
+    this._axisY = new THREE.Vector3();
+    this._axisZ = new THREE.Vector3();
+    this._anchor = new THREE.Vector3();
+    this._basis = new THREE.Matrix4();
   }
 
   get ready() { return this.actions.size > 0; }
@@ -215,25 +230,60 @@ export class CharacterRig {
   }
 
   /**
-   * 총기를 손에 맞춰 놓는다. 오른손에서 왼손 방향이 총구 방향(+X)이 되도록
-   * 매 프레임 맞추기 때문에 어떤 동작에서도 손을 벗어나지 않는다.
-   * @param weapon  아바타 그룹의 자식인 총기 오브젝트
-   * @param group   아바타 그룹
+   * 총기를 손에 맞춰 놓는다.
+   *
+   *  이전 방식은 "오른손 -> 왼손" 방향만 총구에 맞췄다. 그러면 두 가지가 깨진다.
+   *    1) 축 하나만 맞추므로 총이 총열을 축으로 제멋대로 굴러 옆으로 눕거나
+   *       뒤집혀 보인다.
+   *    2) 달리기·측면이동·앉기·사망처럼 소총을 들지 않은 클립에서는 두 손이
+   *       총을 잡은 모양이 아니어서 총구가 엉뚱한 데를 가리킨다.
+   *
+   *  그래서 총구 축과 "총 윗면" 축을 같이 세워 회전을 완전히 고정하고,
+   *  두 손이 총을 잡은 모양일 때만 손 방향을 쓴다. 아닐 때는 몸을 기준으로
+   *  총을 내린 자세로 붙인다.
+   *
+   * @param weapon      아바타 그룹의 자식인 총기 오브젝트
+   * @param group       아바타 그룹
+   * @param gripOffset  손에서 총구 쪽으로 밀어 줄 거리(총 길이의 절반쯤)
+   * @param dt          프레임 간격(초). 방향 전환을 부드럽게 하는 데 쓴다
    */
-  alignWeapon(weapon, group, gripOffset = 0.1) {
+  alignWeapon(weapon, group, gripOffset = 0.1, dt = 0) {
+    if (!weapon || !group) return false;
     const { rightHand, leftHand } = this.bones;
-    if (!weapon || !rightHand || !leftHand) return false;
-    const right = rightHand.getWorldPosition(this._tmpA);
-    const left = leftHand.getWorldPosition(this._tmpB);
-    const dir = left.clone().sub(right);
-    if (dir.lengthSq() < 1e-8) return false;
-    dir.normalize();
-    const localDir = dir.clone().applyQuaternion(
-      group.getWorldQuaternion(this._tmpQ).invert(),
-    ).normalize();
-    weapon.quaternion.setFromUnitVectors(X_AXIS, localDir);
-    const world = right.clone().addScaledVector(dir, gripOffset);
-    weapon.position.copy(group.worldToLocal(world));
+    const inverse = group.getWorldQuaternion(this._tmpQ).invert();
+
+    // --- 총을 쥔 위치 (그룹 로컬) ---
+    if (rightHand) group.worldToLocal(this._anchor.copy(rightHand.getWorldPosition(this._tmpA)));
+    else this._anchor.copy(FALLBACK_HAND);
+
+    // --- 총구 방향 (그룹 로컬) ---
+    let aimed = null;
+    if (rightHand && leftHand) {
+      const span = leftHand.getWorldPosition(this._tmpB)
+        .sub(rightHand.getWorldPosition(this._tmpC));
+      const length = span.length();
+      if (length > GRIP_SPAN_MIN && length < GRIP_SPAN_MAX) {
+        const local = span.divideScalar(length).applyQuaternion(inverse);
+        // 왼손이 몸 뒤에 있으면 총을 받친 것이 아니다(팔을 흔드는 중).
+        if (local.z < 0.2) aimed = local;
+      }
+    }
+    const wanted = aimed || LOW_READY;
+
+    if (!this._muzzle) this._muzzle = wanted.clone();
+    else this._muzzle.lerp(wanted, dt > 0 ? Math.min(1, dt * 14) : 1);
+    if (this._muzzle.lengthSq() < 1e-8) this._muzzle.copy(wanted);
+    this._muzzle.normalize();
+
+    // --- 총구(+X)와 총 윗면(+Y)을 같이 세워 굴림을 없앤다 ---
+    const x = this._axisX.copy(this._muzzle);
+    const z = this._axisZ.crossVectors(x, UP);
+    if (z.lengthSq() < 1e-6) z.set(1, 0, 0);   // 총구가 정확히 수직일 때
+    z.normalize();
+    const y = this._axisY.crossVectors(z, x).normalize();
+    weapon.quaternion.setFromRotationMatrix(this._basis.makeBasis(x, y, z));
+    // 손은 손잡이를 쥔다 -> 총 몸통은 손보다 조금 위, 총구 쪽으로 나가 있다.
+    weapon.position.copy(this._anchor).addScaledVector(x, gripOffset).addScaledVector(y, 0.045);
     return true;
   }
 
