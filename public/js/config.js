@@ -38,6 +38,18 @@ export const MODELS = {
   character:  { url: '/assets/models/character-animated.glb', scale: 1, rotY: Math.PI, fit: { height: 1.8 },
                 placeholder: { type: 'humanoid', h: 1.8, color: 0x7f8a74 } },
 
+  // --- 역할별 캐릭터 (선택) ---
+  //     파일이 있으면 그 역할만 다른 사람으로 보이고, 없으면 위의 character 를
+  //     그대로 쓴다. 그래서 인질 모델 하나만 받아 넣어도 바로 반영된다.
+  //     넣는 법:  node scripts/swap-character.mjs --role hostage <파일>
+  //     (동작 16개는 character-animated.glb 에서 그대로 옮겨 붙는다)
+  characterOfficer: { url: '/assets/models/character-officer.glb', scale: 1, rotY: Math.PI,
+                fit: { height: 1.8 }, optional: true, fallback: 'character' },
+  characterSuspect: { url: '/assets/models/character-suspect.glb', scale: 1, rotY: Math.PI,
+                fit: { height: 1.8 }, optional: true, fallback: 'character' },
+  characterHostage: { url: '/assets/models/character-hostage.glb', scale: 1, rotY: Math.PI,
+                fit: { height: 1.8 }, optional: true, fallback: 'character' },
+
   // --- 총기 (1인칭 뷰모델 + 다른 플레이어 손에 들리는 모델) ---
   rifle:      { url: '/assets/models/weapon-rifle.glb',  scale: 1, rotY: 0, rotation: [0, Math.PI, 0], fit: { length: 0.9, center: true },
                 placeholder: { type: 'gun', len: 0.9, color: 0x2b2b2e } },
@@ -133,6 +145,7 @@ export const QUALITY = {
 
 export const SETTINGS_DEFAULT = {
   soundEnabled: true,
+  volume: 0.8,            // 0~1. 메뉴에서 조절한다
   quality: 'high',
   autoScale: true,        // FPS 보고 자동으로 품질 낮추기
   sensitivity: 1.0,       // 터치 시점 감도

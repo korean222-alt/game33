@@ -21,6 +21,20 @@ const CIVILIAN_COLOR = 0xcfc6ad;
 
 const KIND_LABEL = { suspect: '용의자', hvt: '주요 용의자', civilian: '민간인' };
 
+/*
+ * 역할별 캐릭터 모델.
+ *
+ * 파일을 넣지 않으면 AssetManager 가 알아서 기본 캐릭터로 내려보내므로, 인질
+ * 모델만 받아 넣어도 인질만 다른 사람이 된다. 동작 16개는 기본 캐릭터의 것을
+ * 공유한다.
+ */
+const KIND_MODEL = {
+  teammate: 'characterOfficer',
+  suspect: 'characterSuspect',
+  hvt: 'characterSuspect',
+  civilian: 'characterHostage',
+};
+
 /* --------------------------------------------------------------------------
  *  장구류
  *
@@ -99,9 +113,10 @@ class Avatar {
 
     this.group = new THREE.Group();
 
+    const modelKey = KIND_MODEL[kind] || 'character';
     let body;
     try {
-      body = assets.instance('character', { skinned: true });
+      body = assets.instance(modelKey, { skinned: true });
     } catch {
       body = makePlaceholder({ type: 'humanoid', h: 1.8, color });
       body.userData.isPlaceholder = true;
@@ -122,7 +137,7 @@ class Avatar {
     });
     this.group.add(body);
     this.body = body;
-    this.rig = new CharacterRig(body, body.userData.isPlaceholder ? [] : assets.animations('character'));
+    this.rig = new CharacterRig(body, body.userData.isPlaceholder ? [] : assets.animations(modelKey));
     this.gear = attachGear(body, GEAR[kind] || GEAR.suspect);
 
     if (armed) {

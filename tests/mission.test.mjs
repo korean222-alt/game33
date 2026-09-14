@@ -306,3 +306,63 @@ test('조언은 지금 가장 큰 문제를 먼저 짚는다', () => {
   assert.match(advice({ ...base, suspectsNeutralised: 4, suspectsArrested: 1 }), /체포/);
   assert.match(advice({ ...base, suspectsArrested: 4, objectivesMissed: 2 }), /목표/);
 });
+
+/* ========================================================================== *
+ *  미션표가 실제로 채워지는가
+ *
+ *  "외곽 경비를 다 잡았는데 표가 그대로다" 는 판정이 아니라 전달의 문제였다.
+ *  목표 하나가 끝날 때마다 보고서가 달라져야 서버가 그것을 보낼 수 있다.
+ * ========================================================================== */
+test('경비를 하나씩 처리하면 보고서의 수치와 내용이 그때그때 달라진다', () => {
+  const guards = [
+    suspect({ id: 'g1', origin: 'outdoor' }),
+    suspect({ id: 'g2', origin: 'outdoor' }),
+    suspect({ id: 'g3', origin: 'indoor' }),
+  ];
+  const r = room({ npcs: guards });
+  const signature = () => JSON.stringify(objectiveReport(r).list);
+
+  const before = signature();
+  let state = objectiveState(r, 'perimeter');
+  assert.deepEqual([state.have, state.need, state.done], [0, 2, false]);
+
+  guards[0].alive = false;
+  assert.notEqual(signature(), before, '한 명 잡으면 보고서가 바뀐다 (화면도 바뀐다)');
+  state = objectiveState(r, 'perimeter');
+  assert.deepEqual([state.have, state.need, state.done], [1, 2, false]);
+
+  guards[1].state = 'surrender';           // 항복시켜도 처리된 것이다
+  state = objectiveState(r, 'perimeter');
+  assert.deepEqual([state.have, state.need, state.done], [2, 2, true]);
+
+  // 실내 인원이 남아 있어도 "외곽"은 끝난 것으로 본다.
+  assert.equal(objectiveState(r, 'suspects').done, false);
+});
+
+test('증거와 장치 목표는 무엇이 어느 방에 남았는지 알려 준다', () => {
+  const r = room({
+    evidence: [
+      { id: 'ledger', label: '거래 장부', room: 'LIBRARY', taken: false },
+      { id: 'drive', label: '암호 드라이브', room: 'GALLERY', taken: true },
+    ],
+    sites: [
+      { id: 'A', label: '서재 A', room: 'LIBRARY', defused: false },
+      { id: 'B', label: '온실 B', room: 'CONSERVATORY', defused: true },
+    ],
+  });
+  const evidence = objectiveState(r, 'evidence');
+  assert.equal(evidence.have, 1);
+  assert.match(evidence.detail, /거래 장부/);
+  assert.match(evidence.detail, /서재/, '방 이름을 한글로 알려 준다');
+  assert.doesNotMatch(evidence.detail, /암호 드라이브/, '이미 회수한 것은 빼고 보여 준다');
+
+  const devices = objectiveState(r, 'devices');
+  assert.match(devices.detail, /서재 A/);
+  assert.doesNotMatch(devices.detail, /온실 B/);
+
+  // 다 끝난 목표에는 안내가 남지 않는다.
+  r.evidence.forEach((e) => { e.taken = true; });
+  const report = objectiveReport(r).list.find((o) => o.id === 'evidence');
+  assert.equal(report.done, true);
+  assert.equal(report.detail, '');
+});

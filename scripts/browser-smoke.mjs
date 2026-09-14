@@ -185,9 +185,22 @@ try {
     }
   };
 
+  // 문틈으로 보기: 열쇠구멍 시점이 켜지고, 문짝이 잠깐 감춰지고, 인기척이 보고된다.
   await page.keyboard.down('KeyQ');
-  await untilDoor(() => document.getElementById('banner').textContent.includes('문틈 확인:'));
+  await untilDoor(() => !!window.__mr.peek && document.getElementById('peek').classList.contains('on'));
+  await untilDoor(() => document.getElementById('killfeed').textContent.includes('인기척:'));
+  const peeking = await page.evaluate((id) => ({
+    leaf: window.__mr.world.doorMeshes.get(id).pivot.visible,
+    frozen: window.__mr.player.frozen,
+    fov: Math.round(window.__mr.camera.fov),
+  }), target);
+  assert.equal(peeking.leaf, false, '문틈으로 볼 때는 문짝이 눈앞을 가리면 안 된다');
+  assert.equal(peeking.frozen, true, '문틈을 보는 동안에는 움직일 수 없어야 한다');
+  assert.ok(peeking.fov < 40, `문틈 시야가 좁아지지 않았다: ${peeking.fov}`);
   await page.keyboard.up('KeyQ');
+  await untilDoor(() => !window.__mr.peek && !window.__mr.player.frozen);
+  assert.equal(await page.evaluate((id) => window.__mr.world.doorMeshes.get(id).pivot.visible, target),
+    true, '문틈에서 눈을 떼면 문짝이 돌아와야 한다');
   await untilDoor(() => !window.__mr._doorPending && performance.now() >= window.__mr._doorBusyUntil);
   const state = await page.evaluate((id) => window.__mr.doors.get(id).state, target);
   if (state === 'barricaded') await page.keyboard.press('KeyB');
@@ -214,6 +227,41 @@ try {
     g.player.pos.set(-2.2, 0, 30.4); g.player.vel.set(0, 0, 0); g.player.yaw = 0; g.player.pitch = 1.1; g.player._applyCamera(.1);
     g._tryShoot(performance.now());
   });
+  /* 소리가 "실제로 들릴 만큼" 나오는가.
+   * 헤드리스에는 스피커가 없어 실시간 분석기는 0 만 돌려준다. 오프라인
+   * 렌더링은 장치와 무관하게 같은 계산을 하므로 파형 크기를 바로 잴 수 있다.
+   * 예전에 비명이 0.046(-26dBFS)까지 작아져 "소리가 안 난다" 는 신고를 받았다. */
+  stage = 'audible output';
+  const levels = await page.evaluate(async () => {
+    const { GameAudio } = await import('/js/audio.js');
+    const peak = async (play, seconds = 1.2) => {
+      const offline = new OfflineAudioContext(2, Math.ceil(48000 * seconds), 48000);
+      Object.defineProperty(offline, 'state', { get: () => 'running' });
+      const audio = new GameAudio({ contextFactory: () => offline });
+      await audio.unlock();
+      play(audio);
+      const data = (await offline.startRendering()).getChannelData(0);
+      let top = 0;
+      for (const v of data) top = Math.max(top, Math.abs(v));
+      return +top.toFixed(3);
+    };
+    return {
+      shot: await peak((a) => a.shot('rifle')),
+      reload: await peak((a) => a.reload(2), 2.4),
+      scream: await peak((a) => a.scream(null, 'scream')),
+      cuff: await peak((a) => a.cuff()),
+      door: await peak((a) => a.door({ x: 0, z: 0 }, 'open')),
+      silence: await peak(() => {}),
+    };
+  });
+  console.log('Audio peaks', levels);
+  assert.equal(levels.silence, 0, '아무것도 안 울렸는데 소리가 난다');
+  for (const [name, floor] of [['shot', 0.45], ['reload', 0.2], ['scream', 0.2], ['cuff', 0.2], ['door', 0.15]]) {
+    assert.ok(levels[name] >= floor,
+      `${name} 소리가 너무 작다: ${levels[name]} (최소 ${floor})`);
+  }
+  assert.ok(levels.shot > levels.reload, '총성이 가장 커야 한다');
+
   stage = 'shot and reload';
   await page.keyboard.press('KeyR');
   await page.waitForFunction(() => window.__mr.audio.reloadSources.size > 0);
@@ -226,7 +274,7 @@ try {
   assert.equal(await page.evaluate(() => window.__mr.matchActive), false);
   assert.ok(await page.locator('#menuErr').textContent());
   assert.deepEqual(errors, []);
-  console.log('Browser smoke passed: exterior spawn, animated NPC bounds, Q/E/B doors, shot/reload audio, incompatible server rejection.');
+  console.log('Browser smoke passed: exterior spawn, animated NPC bounds, keyhole peek, Q/E/B doors, audible output levels, shot/reload audio, incompatible server rejection.');
 } catch (error) {
   console.error('Stage:', stage, 'browser errors:', errors);
   if (page && !page.isClosed()) console.error('Game state:', await page.evaluate(() => {

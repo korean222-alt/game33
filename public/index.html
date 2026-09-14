@@ -108,8 +108,10 @@
   #phaseName { font-size:10.5px; letter-spacing:.16em; color:var(--accent); }
   #phaseTitle { font-size:13px; font-weight:700; margin-top:1px; }
   #objectives { list-style:none; margin:7px 0 0; padding:0; }
-  #objectives .obj { display:flex; align-items:center; gap:6px; font-size:11.5px; line-height:1.55; color:#d3cdbd; }
-  #objectives .obj i { width:7px; height:7px; border:1px solid var(--dim); border-radius:2px; flex:none; }
+  #objectives .obj { display:flex; align-items:flex-start; gap:6px; font-size:11.5px; line-height:1.55; color:#d3cdbd; }
+  #objectives .obj i { width:7px; height:7px; border:1px solid var(--dim); border-radius:2px; flex:none; margin-top:4px; }
+  #objectives .obj > span { min-width:0; overflow-wrap:anywhere; }
+  #objectives .obj em { display:block; font-style:normal; font-size:10.5px; color:var(--dim); line-height:1.45; }
   #objectives .obj.done { color:var(--ok); } #objectives .obj.done i { background:var(--ok); border-color:var(--ok); }
   #objectives .obj.bonus { color:#a9a394; } #objectives .obj.bonus i { border-radius:50%; }
   #objectives .obj.failed { color:var(--danger); } #objectives .obj.failed i { background:var(--danger); border-color:var(--danger); }
@@ -129,7 +131,8 @@
   #nade { font-size:11.5px; color:var(--accent); letter-spacing:.06em; margin-top:3px; }
   #nade.empty { color:var(--dim); }
 
-  #banner { position:absolute; left:0; right:0; top:34%; text-align:center; font-size:19px; font-weight:700;
+  /* 안내 문구는 화면 위쪽에 띄운다. 가운데에 두면 조준선과 문 앞 상황을 가린다. */
+  #banner { position:absolute; left:0; right:0; top:13%; text-align:center; font-size:18px; font-weight:700;
     letter-spacing:.05em; text-shadow:0 2px 12px #000; opacity:0; transition:opacity .2s; }
   #defuse { position:absolute; left:50%; top:58%; transform:translateX(-50%); text-align:center;
     background:rgba(10,9,6,.8); border:1px solid var(--line); border-radius:9px; padding:9px 16px; min-width:184px; }
@@ -139,7 +142,25 @@
   #door { position:absolute; left:50%; top:64%; transform:translateX(-50%); text-align:center;
     background:rgba(10,9,6,.78); border:1px solid var(--line); border-radius:9px; padding:7px 14px; }
   #doorTxt { font-size:12.5px; font-weight:700; letter-spacing:.05em; }
-  #doorActions { font-size:11px; color:var(--dim); margin-top:3px; }
+  .soundRow { display:flex; align-items:center; gap:10px; margin:2px 0 4px; }
+  .soundRow input[type=range] { flex:1; accent-color:var(--accent); }
+  button.small { padding:7px 12px; font-size:12px; flex:none; }
+  .soundState { font-size:11.5px; color:var(--dim); margin-bottom:6px; min-height:15px; }
+  .soundState.ok { color:var(--ok); } .soundState.bad { color:var(--danger); }
+  .glossary { margin-top:9px; padding-top:9px; border-top:1px solid var(--line); line-height:1.65; }
+  .glossary u { text-decoration:none; color:var(--accent); font-weight:700; }
+  #doorActions { font-size:11px; color:var(--dim); margin-top:3px; white-space:pre-line; line-height:1.55; }
+  /* 열쇠구멍 시점. 화면 가운데의 작은 구멍만 남기고 전부 가린다.
+     문 반대편을 "직접" 보게 하되, 문틈만큼만 보이도록 하는 장치다. */
+  #peek { position:absolute; inset:0; opacity:0; transition:opacity .16s; pointer-events:none;
+    background:radial-gradient(ellipse 22% 34% at 50% 50%, rgba(0,0,0,0) 62%, rgba(0,0,0,.93) 78%, #000 100%); }
+  #peek.on { opacity:1; }
+  #peek .rim { position:absolute; left:50%; top:50%; width:44vmin; height:60vmin;
+    transform:translate(-50%,-50%); border-radius:50% 50% 46% 46%/58% 58% 42% 42%;
+    box-shadow:inset 0 0 60px 20px rgba(0,0,0,.85); }
+  #peek .tag { position:absolute; left:50%; bottom:13%; transform:translateX(-50%); font-size:12px;
+    letter-spacing:.08em; color:#cfd8d2; background:rgba(8,8,6,.7); border:1px solid var(--line);
+    border-radius:7px; padding:5px 12px; text-align:center; }
   #dmg { position:absolute; inset:0; background:radial-gradient(circle, transparent 42%, rgba(160,20,10,.62) 100%);
     opacity:0; transition:opacity .28s; }
   /* 위협 방향 표시. 밤이라 사수가 안 보일 때 어느 쪽인지 알려 준다. */
@@ -292,6 +313,8 @@
       <div id="nade"><span id="nadeName">섬광</span> <span id="nadeCount">x2</span></div>
     </div>
   </div>
+  <div id="peek" aria-hidden="true"><div class="rim"></div>
+    <div class="tag">문틈으로 보는 중 — 떼면 원래 시점으로 · 이 동안에는 움직이거나 쏠 수 없다</div></div>
   <div id="threat" aria-hidden="true"></div>
   <div id="dmg"></div>
   <div id="gas"></div>
@@ -309,12 +332,12 @@
   <div class="tc btn" id="bCrch">앉기</div>
   <div class="tc btn" id="bSpr">달리기</div>
   <div class="tc cluster" id="actionCluster">
-    <div class="btn small hidden" id="bPeek">문틈<br>확인</div>
+    <div class="btn small hidden" id="bPeek">문틈<br>보기</div>
     <div class="btn small hidden" id="bDoor">문</div>
     <div class="btn small hidden" id="bKick">강제<br>개방</div>
     <div class="btn small hidden" id="bUse">사용</div>
     <div class="btn small" id="bShout">경고</div>
-    <div class="btn small" id="bNadeSel">장비<br>전환</div>
+    <div class="btn small" id="bNadeSel">장비<br>바꾸기</div>
     <div class="btn small" id="bNade">투척</div>
   </div>
 </div>
@@ -340,7 +363,12 @@
       <option value="ultra">최고 — 선명한 그림자 · 빛 번짐</option><option value="high">높음 — 균형 있는 화질</option>
       <option value="medium">보통 — 가벼운 렌더링</option><option value="low">낮음 — 성능 우선</option>
     </select>
-    <label><input id="soundEnabled" type="checkbox" checked> 총격·장전 효과음</label>
+    <label><input id="soundEnabled" type="checkbox" checked> 효과음 · 목소리 (총성, 장전, 수갑, 문, 비명, 구두 경고)</label>
+    <div class="soundRow">
+      <input type="range" id="volumeIn" min="0" max="100" step="5" value="80" aria-label="소리 크기">
+      <button id="btnSoundTest" class="ghost small">소리 테스트</button>
+    </div>
+    <div class="soundState" id="soundState">소리 테스트를 눌러 들리는지 확인하세요.</div>
     <label><input id="autoQuality" type="checkbox" checked> 프레임이 낮으면 자동으로 품질 조절</label>
     <div class="divider"></div>
 
@@ -353,10 +381,19 @@
 
     <div class="hint">
       <b>PC</b> 이동 WASD · 달리기 Shift · 앉기 Ctrl · 점프 Space · 장전 R<br>
-      사격 좌클릭 · 조준 우클릭 · 사용/해체/체포 F(길게)<br>
-      문 열기 E · 문틈 확인 Q(누르는 동안) · 강제 개방 B · 구두 경고 V<br>
-      투척 G · 장비 선택 1 섬광 / 2 가스 / 3 파편<br>
+      사격 좌클릭 · 조준 우클릭 · 사용/해체/체포/증거 회수 F(길게)<br>
+      문 E 열기·닫기·잠금 해제 · Q 문틈으로 보기(누르는 동안) · B 강제 개방<br>
+      구두 경고 V (겨눈 채로 외치면 항복할 수 있다) · 투척 G<br>
+      장비 바꾸기 1 섬광 / 2 가스 / 3 파편<br>
       <b>모바일</b> 왼쪽 조이스틱 이동 · 오른쪽 화면 드래그로 시점 · 하단 버튼
+      <div class="glossary">
+        <b>문 앞에서 무엇이 다른가</b><br>
+        <u>열기</u> 손잡이를 돌린다. 조용하다. 닫힌 문에만 된다.<br>
+        <u>잠금 해제</u> 잠긴 문을 도구로 딴다. 약 4초 걸리지만 거의 소리가 없다.<br>
+        <u>강제 개방</u> 발로 찬다. 즉시 열리고 바리케이드도 부수지만,
+        <b>저택 절반이 그 소리를 듣고 그쪽으로 온다.</b><br>
+        <u>문틈으로 보기</u> 문을 열지 않고 반대편을 직접 들여다본다. 보이는 범위는 좁다.
+      </div>
     </div>
   </div>
 </div>

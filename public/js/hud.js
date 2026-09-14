@@ -12,7 +12,7 @@ const DOOR_LABEL = {
   open: '열림', closed: '닫힘', locked: '잠김', barricaded: '바리케이드', destroyed: '파괴됨',
 };
 const PEEK_LABEL = { none: '인원 없음', one: '인원 1명 이상', several: '인원 여러 명' };
-const DOOR_ACTION_LABEL = { open: '열기', close: '닫기', unlock: '해정' };
+const DOOR_ACTION_LABEL = { open: '열기', close: '닫기', unlock: '잠금\n해제' };
 
 export class Hud {
   constructor() {
@@ -28,7 +28,7 @@ export class Hud {
       phaseName: $('phaseName'), phaseTitle: $('phaseTitle'), objectives: $('objectives'),
       door: $('door'), doorTxt: $('doorTxt'), doorActions: $('doorActions'),
       nade: $('nade'), nadeName: $('nadeName'), nadeCount: $('nadeCount'),
-      flash: $('flash'), gas: $('gas'), threat: $('threat'),
+      flash: $('flash'), gas: $('gas'), threat: $('threat'), peek: $('peek'),
     };
     this.sites = new Map();
     this._bannerTimer = null;
@@ -76,7 +76,7 @@ export class Hud {
       $(id).classList.toggle('hidden', id !== name);
     }
     const inGame = name === null;
-    if (!inGame) this.setAim(0, '', false);
+    if (!inGame) { this.setAim(0, '', false); this.setPeekView(false); }
     this.el.hud.classList.toggle('hidden', !inGame);
   }
 
@@ -127,7 +127,10 @@ export class Hud {
       li.className = 'obj' + (o.done ? ' done' : '') + (o.failed ? ' failed' : '')
         + (o.kind === 'bonus' ? ' bonus' : '');
       const count = o.need > 1 ? ` ${o.have}/${o.need}` : '';
-      li.innerHTML = `<i></i><span>${escapeHtml(o.label)}${count}</span>`;
+      // 어디서 무엇을 해야 하는지까지 적는다. 목표 이름만으로는 저택을
+      // 몇 바퀴 돌게 된다.
+      const detail = o.detail ? `<em>${escapeHtml(o.detail)}</em>` : '';
+      li.innerHTML = `<i></i><span>${escapeHtml(o.label)}${count}${detail}</span>`;
       list.appendChild(li);
     }
   }
@@ -255,12 +258,17 @@ export class Hud {
     this.el.doorActions.textContent = extra;
   }
 
-  /** 문틈 확인 결과 */
+  /** 열쇠구멍 시점 켜기/끄기 */
+  setPeekView(on) {
+    this.el.peek?.classList.toggle('on', !!on);
+  }
+
+  /** 문틈으로 본 결과. 화면으로도 보이지만, 어두워서 놓친 것을 보완해 준다. */
   showPeek(result) {
     if (!result?.ok) return;
     const contacts = PEEK_LABEL[result.contacts] || '판단 불가';
     const armed = result.contacts === 'none' ? '' : result.armed ? ' · 무장 확인' : ' · 무장 미확인';
-    this.banner(`문틈 확인: ${contacts}${armed}`, 2600);
+    this.killfeed(`인기척: ${contacts}${armed}`);
   }
 
   setFps(v, show) {
@@ -312,6 +320,7 @@ export class Hud {
     $('radio').classList.add('hidden');
     this.setDefuse(false);
     this.setDoor(null);
+    this.setPeekView(false);
     this.setFlash(0);
     this.setGas(0);
     this.el.killfeed.innerHTML = '';

@@ -6,6 +6,10 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { validateBytes } from 'gltf-validator';
 import { AssetManager } from '../public/js/assets.js';
 import { MODELS, SETTINGS_DEFAULT } from '../public/js/config.js';
+
+/* 역할별 캐릭터(선택)는 저장소에 넣지 않는다. 사용자가 받아 넣으면 그때만
+ * 쓰이고, 없으면 기본 캐릭터로 내려간다. 필수 모델만 검사한다. */
+const REQUIRED = Object.entries(MODELS).filter(([, model]) => !model.optional);
 import { LocalPlayer } from '../public/js/player.js';
 import { Entities } from '../public/js/entities.js';
 
@@ -22,7 +26,7 @@ await assets.loadAll();
 
 test('every configured model exists and has valid embedded glTF data', async () => {
   assert.equal(assets.missing.length, 0);
-  for (const [key, model] of Object.entries(MODELS)) {
+  for (const [key, model] of REQUIRED) {
     const bytes = await fs.readFile(new URL('../public' + model.url, import.meta.url));
     const result = await validateBytes(new Uint8Array(bytes), { maxIssues: 100 });
     assert.equal(result.issues.numErrors, 0, key + ': ' + JSON.stringify(result.issues.messages));
@@ -33,7 +37,7 @@ test('every configured model exists and has valid embedded glTF data', async () 
 });
 
 test('models are centered, grounded and fitted to gameplay dimensions', () => {
-  for (const [key, model] of Object.entries(MODELS)) {
+  for (const [key, model] of REQUIRED) {
     const box = new THREE.Box3().setFromObject(assets.instance(key), true);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
@@ -102,4 +106,16 @@ test('snapshot recovers a missing NPC and predicted lethal damage does not hide 
   assert.equal(avatar.group.visible, true);
   assert.notEqual(avatar.rig.dead, true);
   entities.clear();
+});
+
+test('역할별 캐릭터 모델은 없으면 기본 캐릭터로 내려간다', () => {
+  for (const key of ['characterOfficer', 'characterSuspect', 'characterHostage']) {
+    assert.ok(MODELS[key]?.optional, `${key} 는 선택 모델이어야 한다`);
+    // 파일을 안 넣었으므로 기본 캐릭터로 연결되고, 동작도 그대로 따라온다.
+    assert.equal(assets.resolve(key), 'character');
+    assert.equal(assets.hasOwnModel(key), false);
+    assert.ok(assets.animations(key).length > 0, '동작은 기본 캐릭터 것을 쓴다');
+    assert.ok(assets.instance(key, { skinned: true }), '인스턴스를 만들 수 있다');
+  }
+  assert.deepEqual(assets.missing, [], '선택 모델이 없다고 경고하지 않는다');
 });

@@ -120,6 +120,20 @@ export function flashStrength(origin, victim, colliders, yaw) {
   return Math.max(0, Math.min(1, strength));
 }
 
+/**
+ * 섬광에 노출된 시간(초).
+ *
+ * 세기에만 비례하게 두면 "터졌는데 바로 쏜다" 가 된다. 옆에서 스쳐도 눈은
+ * 한동안 안 돌아온다. 그래서 바닥값을 둔다. 사람도 용의자도 같은 값을 쓴다.
+ */
+export const FLASH_MIN_SECONDS = 3;
+export const FLASH_FLOOR_STRENGTH = 0.05;
+
+export function flashSeconds(strength) {
+  if (!(strength > FLASH_FLOOR_STRENGTH)) return 0;
+  return Math.max(FLASH_MIN_SECONDS, GRENADES.flash.blindSeconds * strength);
+}
+
 /** 파편 피해. 벽은 완전히 막고, 허리 높이 가구는 상당 부분만 막는다. */
 export function fragDamage(origin, victim, colliders) {
   const spec = GRENADES.frag;

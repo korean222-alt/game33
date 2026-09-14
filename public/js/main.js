@@ -7,6 +7,7 @@ import { Hud, escapeHtml } from './hud.js';
 import { Game } from './game.js';
 import { isTouchDevice } from './input.js';
 import { loadSettings, saveSettings, guessQuality } from './config.js';
+import { GameAudio } from './audio.js';
 
 import { MISSION } from './mission-story.js';
 
@@ -21,6 +22,7 @@ const state = {
   weapon: 'rifle',
   ready: false,
   briefing: null,
+  menuAudio: null,
 };
 
 /* ========================================================================== *
@@ -33,12 +35,7 @@ function initMenu() {
   const quality = $('qualityIn');
   quality.value = settings._qualityPicked ? settings.quality : guessQuality();
   $('autoQuality').checked = settings.autoScale;
-  $('soundEnabled').checked = settings.soundEnabled !== false;
-  $('soundEnabled').addEventListener('change', () => {
-    const enabled = $('soundEnabled').checked;
-    saveSettings({ ...loadSettings(), soundEnabled: enabled });
-    state.game?.audio?.setEnabled(enabled);
-  });
+  initSound(settings);
   const update = () => {
     saveSettings({ ...loadSettings(), quality: quality.value, autoScale: $('autoQuality').checked, _qualityPicked: true });
     state.game?.dispose(); state.game = null;
@@ -65,6 +62,69 @@ function initMenu() {
     enterRoom('joinRoom', code);
   });
   $('codeIn').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('btnJoin').click(); });
+}
+
+/* ========================================================================== *
+ *  소리
+ *
+ *  "소리가 안 난다" 는 신고가 가장 확인하기 어렵다. 브라우저가 막고 있는 건지,
+ *  꺼 둔 건지, 너무 작은 건지 화면만 봐서는 알 수 없다. 그래서 메뉴에서 바로
+ *  눌러 볼 수 있는 시험 버튼과 크기 조절을 둔다.
+ * ========================================================================== */
+function soundVolume() { return Number($('volumeIn').value) / 100; }
+
+/** 지금 소리를 낼 수 있는 객체. 게임이 떠 있으면 그것을, 아니면 메뉴용을 쓴다. */
+function audioTarget() {
+  if (state.game?.audio) return state.game.audio;
+  if (!state.menuAudio) {
+    state.menuAudio = new GameAudio({
+      enabled: $('soundEnabled').checked, volume: soundVolume(),
+    });
+    state.menuAudio.bind(document);
+  }
+  return state.menuAudio;
+}
+
+function setSoundState(text, kind = '') {
+  const el = $('soundState');
+  el.textContent = text;
+  el.className = 'soundState' + (kind ? ' ' + kind : '');
+}
+
+function initSound(settings) {
+  $('soundEnabled').checked = settings.soundEnabled !== false;
+  $('volumeIn').value = String(Math.round((settings.volume ?? 0.8) * 100));
+
+  const apply = () => {
+    const enabled = $('soundEnabled').checked;
+    const volume = soundVolume();
+    saveSettings({ ...loadSettings(), soundEnabled: enabled, volume });
+    for (const audio of [state.game?.audio, state.menuAudio]) {
+      audio?.setEnabled(enabled);
+      audio?.setVolume(volume);
+    }
+  };
+  $('soundEnabled').addEventListener('change', apply);
+  $('volumeIn').addEventListener('input', apply);
+
+  $('btnSoundTest').addEventListener('click', async () => {
+    if (!$('soundEnabled').checked) {
+      setSoundState('효과음이 꺼져 있습니다. 위 체크를 켜 주세요.', 'bad');
+      return;
+    }
+    const audio = audioTarget();
+    audio.setEnabled(true);
+    audio.setVolume(soundVolume());
+    await audio.unlock();
+    if (!audio.running) {
+      setSoundState('브라우저가 소리를 막고 있습니다. 화면을 한 번 더 누른 뒤 다시 시도해 주세요.', 'bad');
+      return;
+    }
+    setSoundState('총성 → 수갑 → 비명 순으로 들려야 합니다. 안 들리면 기기 음량과 탭 음소거를 확인하세요.', 'ok');
+    audio.shot('rifle');
+    setTimeout(() => audio.cuff(), 500);
+    setTimeout(() => audio.scream(null, 'pain'), 1000);
+  });
 }
 
 function setMenuErr(msg) { $('menuErr').textContent = msg; }
@@ -126,6 +186,9 @@ async function ensureGame() {
       $('loadLabel').textContent = `${key} (${done}/${total})`;
     });
     if (!state.socket?.connected) throw new Error('모델 로딩 중 서버 연결이 끊겼습니다. 다시 참가해 주세요.');
+    // 오디오 컨텍스트를 두 개 들고 있을 필요가 없다. 메뉴용은 여기서 닫는다.
+    state.menuAudio?.dispose();
+    state.menuAudio = null;
     state.game = game;
     return game;
   } catch (err) {

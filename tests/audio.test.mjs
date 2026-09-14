@@ -92,3 +92,68 @@ test('내가 맞은 소리와 발각 경고는 위치에 따라 좌우가 갈린
   assert.ok(bus.nodes[2].pan.value < -0.99, '왼쪽에서 난 소리가 왼쪽에서 들려야 한다');
   audio.dispose();
 });
+
+test('사람 소리: 비명 · 수갑 · 작업 · 이명이 모두 난다', async () => {
+  const ctx = context(), audio = new GameAudio({ contextFactory: () => ctx });
+  await audio.unlock();
+  const layers = (play) => { audio.stop(); play(); return audio.sources.size; };
+
+  // 비명은 목소리 한 겹 + 숨소리 한 겹
+  assert.equal(layers(() => audio.scream(null, 'pain')), 2);
+  assert.equal(layers(() => audio.scream({ x: 4, y: 1, z: 0 }, 'death')), 2);
+  // 수갑은 래칫 일곱 번 + 잠김 두 겹
+  assert.equal(layers(() => audio.cuff({ x: 1, y: 0, z: 1 })), 9);
+  assert.equal(layers(() => audio.work(null, 'defuse')), 3);
+  assert.equal(layers(() => audio.work(null, 'evidence')), 2);
+  assert.equal(layers(() => audio.pickup()), 3);
+  assert.equal(layers(() => audio.pin()), 3);
+  assert.equal(layers(() => audio.tinnitus(3)), 2);
+  assert.equal(layers(() => audio.beep()), 2);
+  assert.equal(layers(() => audio.cough()), 2);
+  audio.dispose();
+});
+
+test('남의 장전 소리는 내 장전을 취소하지 않는다', async () => {
+  const ctx = context(), audio = new GameAudio({ contextFactory: () => ctx });
+  await audio.unlock();
+  audio.reload(2);                                   // 내 장전
+  assert.equal(audio.reloadSources.size, 5);
+  audio.reload(2, { x: 6, y: 1, z: 0 });             // 옆 대원의 장전
+  assert.equal(audio.reloadSources.size, 5, '내 장전 소리는 그대로 남는다');
+  audio.cancelReload();
+  assert.equal(audio.reloadSources.size, 0);
+  audio.dispose();
+});
+
+test('음성 합성이 없는 브라우저에서도 조용히 넘어간다', async () => {
+  const ctx = context(), audio = new GameAudio({ contextFactory: () => ctx });
+  await audio.unlock();
+  assert.equal(audio.speak('Drop the weapon!'), false);   // globalThis.speechSynthesis 없음
+
+  const spoken = [];
+  globalThis.speechSynthesis = { speak: (u) => spoken.push(u), cancel: () => spoken.push('cancel') };
+  globalThis.SpeechSynthesisUtterance = function Utterance(text) { this.text = text; };
+  try {
+    assert.equal(audio.speak('Drop the weapon!'), true);
+    assert.equal(spoken[0].text, 'Drop the weapon!');
+    assert.equal(spoken[0].lang, 'en-US');
+    audio.setEnabled(false);
+    assert.equal(audio.speak('Hands up!'), false, '소리를 끄면 말도 하지 않는다');
+  } finally {
+    delete globalThis.speechSynthesis;
+    delete globalThis.SpeechSynthesisUtterance;
+  }
+  audio.dispose();
+});
+
+test('컨텍스트가 멈춰 있으면 다음 소리를 위해 다시 깨운다', async () => {
+  const ctx = context();
+  const audio = new GameAudio({ contextFactory: () => ctx });
+  await audio.unlock();
+  assert.equal(audio.running, true);
+  ctx.state = 'suspended';                 // 탭 전환 등으로 멈췄다
+  audio.shot();                            // 이 소리는 나지 않지만
+  await Promise.resolve();
+  assert.equal(ctx.state, 'running', '다시 깨워 둔다');
+  audio.dispose();
+});

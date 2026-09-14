@@ -168,6 +168,15 @@ function sofa(x, z, ry = 0) {
   add(0, 0, 3.4, 1.05, .52, 0); add(0, .48, 3.4, .16, .65, .52);
   for (const dx of [-1.58, 1.58]) add(dx, 0, .24, 1.05, .3, .52);
 }
+/*
+ * 책장.
+ *
+ * 벽에 딱 붙여 놓으면 책장의 뒷면과 벽면이 정확히 같은 평면에 놓인다. 깊이
+ * 값이 같아서 카메라가 움직일 때마다 어느 쪽이 앞인지 뒤집히고, 책장이
+ * 지지직거리며 깨져 보인다(z-fighting). 6cm 띄운다. 실제로도 책장은 벽에
+ * 딱 붙지 않는다.
+ */
+const WALL_GAP = 0.06;
 function shelf(x, z, w, d, ry = 0) {
   part(x, z, w, d, 2.9, 0, 'wood', ry);
 }
@@ -189,19 +198,19 @@ function van(x, z, ry = 0) {
 
 /* ---- 실내 ---------------------------------------------------------------- */
 // 서재: 서쪽 벽을 따라 책장, 가운데 열람 책상
-for (const z of [-16, -13, -10]) shelf(-23.1, z, 1.4, 2.6);
-for (const x of [-22.6, -19.8]) shelf(x, -17.1, 2.4, 1.2);
+for (const z of [-16, -13, -10]) shelf(-23.1 + WALL_GAP, z, 1.4, 2.6);
+for (const x of [-22.6, -19.8]) shelf(x + (x < -22 ? WALL_GAP : 0), -17.1, 2.4, 1.2);
 table(-15, -12, 3.6, 1.6);
 sofa(-12.6, -15, Math.PI / 2);
 // 응접실
 sofa(-16.5, 2); sofa(-16.5, -2, Math.PI); table(-16.5, 0, 2.2, 1.2);
-shelf(-23.1, 0, 1.4, 4.2);
+shelf(-23.1 + WALL_GAP, 0, 1.4, 4.2);
 // 연회실: 긴 식탁과 의자
 table(-16.5, 12, 6, 2.2);
 for (const x of [-19, -16.5, -14]) for (const z of [9.8, 14.2]) {
   part(x, z, .8, .8, .55, 0, 'velvet'); part(x, z + (z > 12 ? .35 : -.35), .8, .1, .6, .55, 'velvet');
 }
-shelf(-23.1, 15.4, 1.4, 3.4);
+shelf(-23.1 + WALL_GAP, 15.4, 1.4, 3.4);
 // 온실: 화단과 유리 진열대
 for (const z of [-16, -8]) part(21, z, 4.6, 1.3, .75, 0, 'stone');
 part(13.5, -12, 1.2, 5.4, .9, 0, 'glass');
@@ -211,7 +220,7 @@ for (const z of [-3, 3]) part(18, z, 1, 1, 1.15, 0, 'stone');
 part(12.2, 0, 1.1, 6.2, 1.1, 0, 'stone');
 // 게스트 스위트
 sofa(16.5, 14); table(16.5, 10.5, 3.2, 1.8);
-shelf(23.1, 12, 1.4, 3.6);
+shelf(23.1 - WALL_GAP, 12, 1.4, 3.6);
 crateStack(20.5, 16); crateStack(22, 15.4, .4);
 // 대홀: 응접 소파와 의식용 계단
 sofa(-5, 5, Math.PI / 2); sofa(5, 5, -Math.PI / 2); table(0, 5, 2.4, 1.2);
@@ -221,7 +230,7 @@ for (const x of [-4.2, 4.2]) part(x, -13.4, .25, 5.2, 1.1, 2.4, 'brass');
 for (const x of [-6.5, 6.5]) for (const z of [-4, 10]) part(x, z, .65, .65, 6.9, 0, 'stone');
 
 /* ---- 앞마당 -------------------------------------------------------------- */
-part(0, 19.4, 9, 2.4, .22, 0, 'stone');                 // 현관 포치
+part(0, 19.4 + WALL_GAP, 9, 2.4, .22, 0, 'stone');      // 현관 포치 (외벽에서 띄운다)
 for (const x of [-4.2, 4.2]) part(x, 19.6, .7, .7, 3.6, .22, 'stone');
 for (const x of [-20, 20]) hedge(x, 26, 11, 1.3);        // 진입로 양쪽 생울타리
 for (const z of [21.5, 30.5]) { hedge(-7.4, z, 1.3, 5.4); hedge(7.4, z, 1.3, 5.4); }
@@ -348,19 +357,37 @@ export const POSTS = [
   { room: 'GUEST SUITE', x: 21.4, z: 12.6, yaw: Math.PI / 2 },
 ];
 
-/** 민간인이 숨을 수 있는 자리. */
+/**
+ * 민간인(과 인질)이 있을 수 있는 자리.
+ *
+ * 방마다 두세 곳씩 둔다. 한 방에 한 자리뿐이면 인질이 늘 같은 구석에 서 있어서
+ * 두 번째 판부터는 문을 열기 전에 어디 있는지 알아 버린다.
+ */
 export const CIVILIAN_SPOTS = [
   { room: 'DINING ROOM', x: -22, z: 12.4 },
+  { room: 'DINING ROOM', x: -13.8, z: 17.2 },
+  { room: 'DINING ROOM', x: -20.4, z: 16.8 },
   { room: 'DRAWING ROOM', x: -22, z: 4.4 },
+  { room: 'DRAWING ROOM', x: -13.2, z: -4.4 },
+  { room: 'DRAWING ROOM', x: -19.4, z: -4.6 },
   { room: 'GUEST SUITE', x: 22, z: 9.4 },
+  { room: 'GUEST SUITE', x: 13.4, z: 17.2 },
+  { room: 'GUEST SUITE', x: 19.2, z: 6.6 },
   { room: 'GALLERY', x: 21.6, z: -3.6 },
+  { room: 'GALLERY', x: 14.6, z: 4.4 },
+  { room: 'GALLERY', x: 15.4, z: -4.4 },
   { room: 'LIBRARY', x: -11.4, z: -11.4 },
-  { room: 'CONSERVATORY', x: 21.6, z: -4.4 },
+  { room: 'LIBRARY', x: -20.2, z: -6.6 },
+  { room: 'CONSERVATORY', x: 21.6, z: -11.4 },
+  { room: 'CONSERVATORY', x: 15.2, z: -16.6 },
   { room: 'GRAND HALL', x: -6.4, z: 15.4 },
+  { room: 'GRAND HALL', x: 6.6, z: 15.2 },
 ];
 
 /** 주요 용의자가 인질과 함께 농성할 수 있는 방. */
-export const HVT_ROOMS = ['DINING ROOM', 'GALLERY', 'GUEST SUITE', 'DRAWING ROOM'];
+export const HVT_ROOMS = [
+  'DINING ROOM', 'GALLERY', 'GUEST SUITE', 'DRAWING ROOM', 'LIBRARY', 'CONSERVATORY',
+];
 
 export const BOT_SPAWNS = POSTS.map((p) => ({ x: p.x, z: p.z }));
 export const PATROL_NODES = POSTS.map((p) => ({ x: p.x, z: p.z }));

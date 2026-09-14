@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { MAP, COLLIDERS } from '../public/js/map-data.js';
 import { DOOR, DoorSet, rollDoorStates } from '../public/js/doors.js';
 import {
-  GRENADES, GRENADE_ORDER, createGrenade, stepGrenade, flashStrength, fragDamage,
-  gasIntensity, startingGrenades,
+  GRENADES, GRENADE_ORDER, createGrenade, stepGrenade, flashStrength, flashSeconds,
+  FLASH_MIN_SECONDS, fragDamage, gasIntensity, startingGrenades,
 } from '../public/js/grenades.js';
 
 const run = (grenade, colliders, seconds = 4, now = 0) => {
@@ -95,4 +95,16 @@ test('가스: 시야와 무관하지만 벽으로 줄어들고 범위를 넘으�
   const wall = [{ x: 0, z: 1.5, w: 20, d: .4, h: 4 }];
   assert.ok(gasIntensity(cloud, { x: 0, z: 3 }, wall) < gasIntensity(cloud, { x: 0, z: 3 }, []));
   assert.ok(gasIntensity(cloud, { x: 0, z: 3 }, wall) > 0, '완전히 막지는 않는다');
+});
+
+test('섬광에 걸리면 최소 3초는 아무것도 못 한다 (스쳐도, 정면이면 더 길게)', () => {
+  assert.equal(flashSeconds(0), 0, '안 맞았으면 0초');
+  assert.equal(flashSeconds(0.05), 0, '거의 안 스쳤으면 0초');
+  // 약하게 맞아도 바닥값이 있어야 "터졌는데 바로 쏜다"가 없어진다.
+  assert.equal(flashSeconds(0.1), FLASH_MIN_SECONDS);
+  assert.equal(flashSeconds(0.5), FLASH_MIN_SECONDS);
+  // 정면에서 가까이 맞으면 바닥값보다 길다.
+  assert.ok(flashSeconds(1) > FLASH_MIN_SECONDS);
+  assert.equal(flashSeconds(1), GRENADES.flash.blindSeconds);
+  assert.ok(FLASH_MIN_SECONDS >= 3);
 });
