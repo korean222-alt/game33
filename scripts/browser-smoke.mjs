@@ -7,7 +7,8 @@ const server = spawn(process.execPath, ['server.js'], {
   cwd: new URL('..', import.meta.url), env: { ...process.env, PORT: '3191' },
   stdio: ['ignore', 'pipe', 'pipe'],
 });
-let browser;
+let browser, page;
+let stage = 'startup';
 const errors = [];
 server.stderr.on('data', data => errors.push(String(data)));
 try {
@@ -20,12 +21,13 @@ try {
     server.once('exit', code => { clearTimeout(timer); reject(new Error('Server exit: ' + code)); });
   });
   browser = await chromium.launch({ args: ['--no-sandbox', '--enable-unsafe-swiftshader'] });
-  const page = await browser.newPage({ viewport: { width: 960, height: 640 } });
+  page = await browser.newPage({ viewport: { width: 960, height: 640 } });
   page.on('pageerror', error => errors.push(error.message));
   page.on('console', message => { if (message.type() === 'error') errors.push(message.text()); });
   await page.addInitScript(() => localStorage.setItem('market-raid-settings', JSON.stringify({
     quality: 'low', _qualityPicked: true, autoScale: false, soundEnabled: true,
   })));
+  stage = 'menu and briefing';
   await page.goto('http://localhost:3191');
   await page.click('#btnCreate');
   await page.waitForFunction(() => window.__mr?.input, null, { timeout: 30000 });
@@ -37,6 +39,7 @@ try {
   const pages = await page.evaluate(async () => (await import('/js/mission-story.js')).MISSION.pages.length);
   for (let i = 0; i < pages; i++) await page.click('#briefNext');
   await page.waitForFunction(() => window.__mr?.matchActive);
+  stage = 'spawn and NPC geometry';
   const start = await page.evaluate(async () => {
     const game = window.__mr, THREE = await import('three');
     const { isIndoors } = await import('/js/map-data.js');
@@ -63,13 +66,16 @@ try {
   }
   assert.equal(start.glError, 0);
 
+  stage = 'door input';
   // Real keyboard -> Input -> Game -> Socket.io -> server -> world state.
   await page.evaluate(() => {
     const g = window.__mr;
-    g.player.spawn(0, 19.15, 0);
+    // Relocate the test actor without resetting the match's input sequence.
+    g.player.pos.set(0, 0, 19.15); g.player.vel.set(0, 0, 0); g.player.yaw = 0;
     g.socket.emit('input', g.player.netState());
   });
   await page.waitForFunction(() => window.__mr.doors.nearest(window.__mr.player.pos.x, window.__mr.player.pos.z)?.door.id === 'front');
+  console.log('Door approach', await page.evaluate(() => ({ pos: window.__mr.player.pos.toArray(), enabled: window.__mr.input.enabled, alive: window.__mr.alive, pending: window.__mr._doorPending })));
   await page.keyboard.down('KeyQ');
   await page.waitForFunction(() => document.getElementById('banner').textContent.includes('문틈 확인:'));
   await page.keyboard.up('KeyQ');
@@ -96,7 +102,7 @@ try {
   await page.evaluate(() => {
     const g = window.__mr;
     // Shoot upward outside the estate so this check does not injure a civilian.
-    g.player.spawn(-2.2, 30.4, 0); g.player.pitch = 1.1; g.player._applyCamera(.1);
+    g.player.pos.set(-2.2, 0, 30.4); g.player.vel.set(0, 0, 0); g.player.yaw = 0; g.player.pitch = 1.1; g.player._applyCamera(.1);
     g._tryShoot(performance.now());
   });
   await page.keyboard.press('KeyR');
@@ -111,6 +117,16 @@ try {
   assert.ok(await page.locator('#menuErr').textContent());
   assert.deepEqual(errors, []);
   console.log('Browser smoke passed: exterior spawn, animated NPC bounds, Q/E/B doors, shot/reload audio, incompatible server rejection.');
+} catch (error) {
+  console.error('Stage:', stage, 'browser errors:', errors);
+  if (page && !page.isClosed()) console.error('Game state:', await page.evaluate(() => {
+    const g = window.__mr;
+    return g && { position: g.player?.pos.toArray(), active: g.matchActive, alive: g.alive,
+      inputEnabled: g.input?.enabled, peek: g.input?.peek, door: g.doors?.get('front')?.state,
+      pending: g._doorPending, busyUntil: g._doorBusyUntil, now: performance.now(),
+      banner: document.getElementById('banner')?.textContent };
+  }).catch(() => null));
+  throw error;
 } finally {
   await browser?.close();
   server.kill();
