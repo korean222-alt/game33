@@ -33,6 +33,12 @@ function initMenu() {
   const quality = $('qualityIn');
   quality.value = settings._qualityPicked ? settings.quality : guessQuality();
   $('autoQuality').checked = settings.autoScale;
+  $('soundEnabled').checked = settings.soundEnabled !== false;
+  $('soundEnabled').addEventListener('change', () => {
+    const enabled = $('soundEnabled').checked;
+    saveSettings({ ...loadSettings(), soundEnabled: enabled });
+    state.game?.audio?.setEnabled(enabled);
+  });
   const update = () => {
     saveSettings({ ...loadSettings(), quality: quality.value, autoScale: $('autoQuality').checked, _qualityPicked: true });
     state.game?.dispose(); state.game = null;

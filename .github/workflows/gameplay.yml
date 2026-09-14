@@ -1,0 +1,29 @@
+name: Gameplay regression
+on:
+  push:
+    branches: [main, claude/realistic-gameplay-improvements-ofdtvw]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  gameplay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - name: Refresh and verify asset hashes
+        run: |
+          node scripts/asset-integrity.mjs --write
+          git diff --exit-code -- asset-integrity.json
+      - run: npm run build:static
+      - name: Install browser test runtime
+        run: |
+          npm install --no-save --package-lock=false playwright@1.58.2
+          npx playwright install --with-deps chromium
+      - run: node scripts/browser-smoke.mjs

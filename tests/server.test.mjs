@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { io } from 'socket.io-client';
+import { GAME_PROTOCOL } from '../public/js/protocol.js';
 import { DOORWAYS, SPAWNS } from '../public/js/map-data.js';
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -54,6 +55,8 @@ test('two clients: readiness gate, shot validation, doors, 장비, 단계, room 
   const request = (s, event, payload) => new Promise((resolve, reject) =>
     s.timeout(4000).emit(event, payload, (error, result) => (error ? reject(error) : resolve(result))));
 
+  assert.equal((await request(host, 'protocol', {})).protocol, GAME_PROTOCOL);
+
   const created = await request(host, 'createRoom', { name: '검증1', weapon: 'rifle' });
   const joined = await request(guest, 'joinRoom', { code: created.lobby.code, name: '검증2', weapon: 'smg' });
   assert.equal(joined.ok, true);
@@ -94,6 +97,7 @@ test('two clients: readiness gate, shot validation, doors, 장비, 단계, room 
 
   /* ---- 매치 구성 ---- */
   assert.ok(match.endsAt - Date.now() > 21 * 60 * 1000);
+  assert.equal(match.protocol, GAME_PROTOCOL);
   assert.equal(match.players.length, 2);
   assert.equal(match.doors.length, DOORWAYS.length);
   assert.ok(match.npcs.some((n) => n.kind === 'hvt'), '주요 용의자가 있다');
@@ -130,6 +134,7 @@ test('two clients: readiness gate, shot validation, doors, 장비, 단계, room 
   assert.equal(me.ammo, 29); // 작전 중 장비 변경으로 탄약이 채워지지 않는다.
   assert.deepEqual(me.grenades, { flash: 2, gas: 2, frag: 1 });
   assert.equal(snapshot.npcs.length, match.npcs.length);
+  assert.equal(snapshot.doors.length, DOORWAYS.length);
 
   /* ---- 오래된 입력은 무시된다 ---- */
   host.emit('input', { seq: 2, x: 0, y: 0, z: 24, yaw: 0, pitch: 0 });

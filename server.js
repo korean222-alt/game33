@@ -13,6 +13,7 @@
  * ========================================================================== */
 
 import express from 'express';
+import { GAME_PROTOCOL } from './public/js/protocol.js';
 import http from 'http';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -1028,6 +1029,7 @@ function startMatch(room, io) {
   }
 
   io.to(room.code).emit('matchStart', {
+    protocol: GAME_PROTOCOL,
     endsAt: room.endsAt,
     sites: room.sites.map((s) => ({ id: s.id, x: s.x, z: s.z, label: s.label })),
     evidence: room.evidence.map((e) => ({ id: e.id, x: e.x, z: e.z, label: e.label })),
@@ -1101,6 +1103,7 @@ function tickRoom(room, io) {
     seq: room.seq,
     remaining: Math.max(0, room.endsAt - t),
     phase: room.phase,
+    doors: room.doors.snapshot(),
     players: [...room.players.values()].map((p) => ({
       id: p.id, x: +p.x.toFixed(3), y: +p.y.toFixed(3), z: +p.z.toFixed(3),
       yaw: +p.yaw.toFixed(3), pitch: +p.pitch.toFixed(3),
@@ -1136,13 +1139,19 @@ const app = express();
 const server = http.createServer(app);
 const io = new Server(server, { cors: { origin: '*' }, pingInterval: 10000, pingTimeout: 20000 });
 
-app.use(express.static(path.join(__dirname, 'public'), { maxAge: '1h' }));
+app.use(express.static(path.join(__dirname, 'public'), {
+  maxAge: '1h',
+  setHeaders(res, file) {
+    if (/\.(?:html|js)$/.test(file)) res.setHeader('Cache-Control', 'no-cache');
+  },
+}));
 // three.js 를 CDN 없이 로컬에서 서빙 (오프라인/기내에서도 동작)
 app.use('/vendor/three', express.static(path.join(__dirname, 'node_modules/three')));
 
-app.get('/health', (_req, res) => res.json({ ok: true, rooms: rooms.size }));
+app.get('/health', (_req, res) => res.json({ ok: true, rooms: rooms.size, protocol: GAME_PROTOCOL }));
 
 io.on('connection', (socket) => {
+  socket.on('protocol', (_payload, cb) => cb?.({ protocol: GAME_PROTOCOL }));
   let room = null;
   let me = null;
 
@@ -1259,7 +1268,7 @@ io.on('connection', (socket) => {
     const dir = { x: d.dx / length, y: d.dy / length, z: d.dz / length };
     const res = resolveShot(room, me, origin, dir, io, d.viewTime);
     io.to(room.code).emit('playerShot', {
-      id: me.id, x: origin.x, y: origin.y, z: origin.z,
+      id: me.id, weapon: me.weapon, x: origin.x, y: origin.y, z: origin.z,
       dx: dir.x, dy: dir.y, dz: dir.z, dist: res.dist, hit: res.hit,
     });
     emitNoise(room, me.x, me.z, NOISE.shot, 'shot', me.id);

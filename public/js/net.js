@@ -7,6 +7,7 @@
  * ========================================================================== */
 
 import { SERVER_URL } from './server-url.js';
+import { GAME_PROTOCOL, UPDATE_MESSAGE } from './protocol.js';
 
 let socket = null;
 
@@ -60,6 +61,20 @@ export async function connect() {
     socket.once('connect_error', fail);
   });
 
+  // Reject an old backend before creating a room: old servers send "bots", start
+  // inside the house and have no door event, even when the new frontend loads.
+  try {
+    await new Promise((resolve, reject) => {
+      socket.timeout(8000).emit('protocol', {}, (error, reply) => {
+        if (error || reply?.protocol !== GAME_PROTOCOL) reject(new Error(UPDATE_MESSAGE));
+        else resolve();
+      });
+    });
+  } catch (error) {
+    socket.disconnect();
+    socket = null;
+    throw error;
+  }
   return socket;
 }
 

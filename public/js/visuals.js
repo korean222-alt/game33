@@ -59,7 +59,7 @@ export function dressRoom(scene, renderer) {
   // Fine coffer lines, recessed in the ceiling.
   for(let x=-21;x<=21;x+=6)box(x,6.94,0,.1,.1,35.6,wood);
   for(let z=-15;z<=15;z+=6)box(0,6.94,z,47.6,.1,.1,wood);
-  for(const L of LIGHTS){
+  for(const L of LIGHTS.filter(L => L.kind !== 'lamp')){
     box(L.x,6.2,L.z,.07,1.5,.07,brass);
     const ring=new THREE.Mesh(new THREE.TorusGeometry(1.15,.035,6,32),brass);
     ring.rotation.x=Math.PI/2;ring.position.set(L.x,L.y-.15,L.z);scene.add(ring);

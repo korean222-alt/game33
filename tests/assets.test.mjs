@@ -88,3 +88,18 @@ test('partial joystick movement stays slower than full movement and respawn rese
   fast.adsAmount = 1; fast.muzzleUntil = Infinity; fast.spawn(-3.4, 4.6, 0);
   assert.equal(fast.adsAmount, 0); assert.equal(fast.muzzleUntil, 0);
 });
+
+test('snapshot recovers a missing NPC and predicted lethal damage does not hide a live shooter', () => {
+  globalThis.document = { createElement: () => ({ width: 0, height: 0, getContext: () => ({ strokeText() {}, fillText() {} }) }) };
+  const entities = new Entities(new THREE.Scene(), assets);
+  entities.onSnapshot({ players: [], npcs: [{
+    id: 'late', kind: 'suspect', x: 1, y: 0, z: 1, yaw: 0, hp: 100, alive: 1,
+  }] });
+  assert.equal(entities.npcs.size, 1);
+  entities.applyShotPredictions([{ prediction: { targetId: 'late', damage: 120 } }]);
+  entities.update(.016, new THREE.PerspectiveCamera());
+  const avatar = entities.npcs.get('late');
+  assert.equal(avatar.group.visible, true);
+  assert.notEqual(avatar.rig.dead, true);
+  entities.clear();
+});

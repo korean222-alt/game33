@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import { NET } from './config.js';
+import { makePlaceholder } from './assets.js';
 import { CharacterRig } from './character-animation.js';
 
 const TEAM_COLORS = [0x5b8fd6, 0x64b06a, 0xd6b45b, 0xb06fc4];
@@ -87,7 +88,8 @@ class Avatar {
     try {
       body = assets.instance('character', { skinned: true });
     } catch {
-      body = new THREE.Group();
+      body = makePlaceholder({ type: 'humanoid', h: 1.8, color });
+      body.userData.isPlaceholder = true;
     }
     // 진영 구분 색. 텍스처를 완전히 덮지 않도록 절반만 섞는다.
     body.traverse((o) => {
@@ -95,7 +97,8 @@ class Avatar {
       const mats = Array.isArray(o.material) ? o.material : [o.material];
       o.material = mats.map((m) => {
         const c = m.clone();
-        if (c.color) c.color.lerp(new THREE.Color(color), 0.45);
+        if (c.color && !c.map) c.color.lerp(new THREE.Color(color), 0.18);
+        // Preserve skin/clothing textures instead of tinting the entire person red.
         return c;
       });
       if (o.material.length === 1) o.material = o.material[0];
@@ -104,7 +107,7 @@ class Avatar {
     });
     this.group.add(body);
     this.body = body;
-    this.rig = new CharacterRig(body, assets.animations('character'));
+    this.rig = new CharacterRig(body, body.userData.isPlaceholder ? [] : assets.animations('character'));
 
     if (armed) {
       this.weapon = assets.instance(weapon);
@@ -145,7 +148,7 @@ class Avatar {
     this.group.rotation.y = s.yaw;
 
     const alive = s.alive === undefined ? true : !!s.alive;
-    const visible = alive && !this.confirmedDead && this.latestHp - this.predictedDamage > 0;
+    const visible = alive && !this.confirmedDead && this.latestHp > 0;
     this.alive = alive;
 
     const surrendered = !!s.hands || !!s.cuffed || s.state === 'surrender';
@@ -200,7 +203,7 @@ function makeNameTag(text, color) {
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
   const sp = new THREE.Sprite(new THREE.SpriteMaterial({
-    map: tex, transparent: true, depthTest: false, sizeAttenuation: true,
+    map: tex, transparent: true, depthTest: true, depthWrite: false, sizeAttenuation: true,
   }));
   sp.scale.set(1.1, 0.28, 1);
   sp.renderOrder = 5;
@@ -247,7 +250,7 @@ export class Entities {
       avatar.latestHp = n.hp ?? n.maxHp ?? 100;
       avatar.group.position.set(n.x ?? 0, n.y ?? 0, n.z ?? 0);
       avatar.push(performance.now(), {
-        ...n, x: n.x ?? 0, y: n.y ?? 0, z: n.z ?? 0, yaw: n.yaw ?? 0, alive: 1,
+        ...n, x: n.x ?? 0, y: n.y ?? 0, z: n.z ?? 0, yaw: n.yaw ?? 0, alive: n.alive ?? 1,
       });
       this.npcs.set(n.id, avatar);
     }
@@ -256,6 +259,7 @@ export class Entities {
   /** 서버 스냅샷 반영 */
   onSnapshot(snap) {
     const t = performance.now();
+    this.spawnNpcs(snap.npcs || []); // recover entities missed during a join event
     for (const p of snap.players) {
       if (p.id === this.myId) continue;
       this.players.get(p.id)?.push(t, p);
@@ -264,7 +268,7 @@ export class Entities {
       const avatar = this.npcs.get(n.id);
       if (!avatar) continue;
       if (Number.isFinite(n.hp)) avatar.latestHp = n.hp;
-      if (!n.alive) avatar.confirmedDead = true;
+      if (n.alive === 0 || n.alive === false) avatar.confirmedDead = true;
       avatar.push(t, n);
     }
   }
@@ -373,6 +377,12 @@ class Effects {
   /** 사격 한 발을 그린다 (from 에서 dir 로 dist 만큼) */
   shot(from, dir, dist) {
     this.tracer(from, dir, dist);
+    // A brief depth-tested flash reveals the actual shooter without showing through walls.
+    const flash = new THREE.Mesh(this.sparkGeo, this.sparkMat.clone());
+    flash.position.set(from.x, from.y, from.z);
+    flash.scale.setScalar(2);
+    this.scene.add(flash);
+    this.sparks.push({ obj: flash, life: 0.1 });
     this.spark({
       x: from.x + dir.x * dist,
       y: from.y + dir.y * dist,

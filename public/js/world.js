@@ -108,7 +108,7 @@ export class World {
       new THREE.BoxGeometry(i.maxX - i.minX + 1.2, 0.6, i.maxZ - i.minZ + 1.2),
       new THREE.MeshStandardMaterial({ color: 0x2a2622, roughness: .85 }),
     );
-    roof.position.y = MAP.height + 0.3;
+    roof.position.y = MAP.height + 0.35; // 5 cm clearance above the ceiling; no coplanar underside.
     roof.castShadow = true;
     this.scene.add(roof);
 
@@ -399,7 +399,8 @@ export class World {
     for (const m of this.evidenceMarkers.values()) { m.taken = false; m.group.visible = true; }
     this.setExtractionActive(false);
     for (const entry of this.doorMeshes.values()) {
-      entry.state = DOOR.CLOSED; entry.target = 0; entry.pivot.visible = true;
+      entry.state = DOOR.CLOSED; entry.angle = entry.target = 0;
+      entry.pivot.rotation.y = 0; entry.pivot.visible = true;
     }
   }
 
