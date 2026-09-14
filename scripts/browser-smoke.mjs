@@ -133,34 +133,78 @@ try {
 
   stage = 'door input';
   // Real keyboard -> Input -> Game -> Socket.io -> server -> world state.
-  await page.evaluate(() => {
+  await page.evaluate(async () => {
     const g = window.__mr;
     // Relocate the test actor without resetting the match's input sequence.
-    g.player.pos.set(0, 0.22, 19.15); g.player.vel.set(0, 0, 0); g.player.yaw = 0;
+    // Pick the door that is furthest from every living suspect: unlocking takes
+    // 4.2s, and a guard with a line to that doorway will kill the actor part way
+    // through. The check is about the door mechanism, not about winning a
+    // firefight, so it must not depend on where the mission randomly put people.
+    const { groundHeight } = await import('/js/map-data.js');
+    const threats = [...g.entities.npcs.values()]
+      .filter(a => a.kind !== 'civilian' && !a.confirmedDead && a.latestHp > 0)
+      .map(a => a.group.position);
+    const clearance = (x, z) => threats.reduce(
+      (worst, t) => Math.min(worst, Math.hypot(t.x - x, t.z - z)), Infinity);
+
+    let best = null;
+    for (const door of g.doors.doors) {
+      if (!g.doors.available(door).length) continue;
+      for (const side of [-1, 1]) {
+        const x = door.axis === 'x' ? door.x + side * 1.2 : door.x;
+        const z = door.axis === 'x' ? door.z : door.z + side * 1.2;
+        const score = clearance(x, z);
+        if (!best || score > best.score) best = { id: door.id, x, z, score };
+      }
+    }
+    g.player.pos.set(best.x, groundHeight(best.x, best.z, .32, g.doors.colliders()), best.z);
+    g.player.vel.set(0, 0, 0); g.player.yaw = 0;
     g.socket.emit('input', g.player.netState());
+    return best;
   });
-  await page.waitForFunction(() => window.__mr.doors.nearest(window.__mr.player.pos.x, window.__mr.player.pos.z)?.door.id === 'front');
-  console.log('Door approach', await page.evaluate(() => ({ pos: window.__mr.player.pos.toArray(), enabled: window.__mr.input.enabled, alive: window.__mr.alive, pending: window.__mr._doorPending })));
+  const target = await page.evaluate(() => {
+    const g = window.__mr;
+    return g.doors.nearest(g.player.pos.x, g.player.pos.z)?.door.id;
+  });
+  assert.ok(target, 'the actor is not within reach of any door');
+  console.log('Door approach', await page.evaluate((id) => ({
+    door: id, state: window.__mr.doors.get(id).state,
+    pos: window.__mr.player.pos.toArray(), enabled: window.__mr.input.enabled,
+    alive: window.__mr.alive, pending: window.__mr._doorPending,
+  }), target));
+
+  // Every wait below also fails fast if the actor is killed, instead of sitting
+  // out a 30s timeout and reporting the wrong thing.
+  const alive = () => page.evaluate(() => window.__mr.alive && window.__mr.matchActive);
+  const untilDoor = async (predicate, arg, timeout = 15000) => {
+    try {
+      await page.waitForFunction(predicate, arg, { timeout });
+    } catch (error) {
+      if (!await alive()) throw new Error('the test actor was killed during the door check');
+      throw error;
+    }
+  };
+
   await page.keyboard.down('KeyQ');
-  await page.waitForFunction(() => document.getElementById('banner').textContent.includes('문틈 확인:'));
+  await untilDoor(() => document.getElementById('banner').textContent.includes('문틈 확인:'));
   await page.keyboard.up('KeyQ');
-  await page.waitForFunction(() => !window.__mr._doorPending && performance.now() >= window.__mr._doorBusyUntil);
-  const state = await page.evaluate(() => window.__mr.doors.get('front').state);
+  await untilDoor(() => !window.__mr._doorPending && performance.now() >= window.__mr._doorBusyUntil);
+  const state = await page.evaluate((id) => window.__mr.doors.get(id).state, target);
   if (state === 'barricaded') await page.keyboard.press('KeyB');
   else {
     await page.keyboard.press('KeyE');
     if (state === 'locked') {
-      await page.waitForFunction(() => window.__mr.doors.get('front').state === 'closed', null, { timeout: 8000 });
-      await page.waitForFunction(() => !window.__mr._doorPending && performance.now() >= window.__mr._doorBusyUntil);
+      await untilDoor((id) => window.__mr.doors.get(id).state === 'closed', target, 10000);
+      await untilDoor(() => !window.__mr._doorPending && performance.now() >= window.__mr._doorBusyUntil);
       await page.keyboard.press('KeyE');
     }
   }
-  await page.waitForFunction(() => ['open', 'destroyed'].includes(window.__mr.doors.get('front').state));
-  const door = await page.evaluate(() => {
+  await untilDoor((id) => ['open', 'destroyed'].includes(window.__mr.doors.get(id).state), target);
+  const door = await page.evaluate((id) => {
     const g = window.__mr;
-    return { blocking: g.doors.colliders().some(c => c.id === 'front'),
-      visible: g.world.doorMeshes.get('front').pivot.visible, state: g.doors.get('front').state };
-  });
+    return { blocking: g.doors.colliders().some(c => c.id === id),
+      visible: g.world.doorMeshes.get(id).pivot.visible, state: g.doors.get(id).state };
+  }, target);
   assert.equal(door.blocking, false);
   if (door.state === 'destroyed') assert.equal(door.visible, false);
 
