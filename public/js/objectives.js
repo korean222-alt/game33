@@ -18,10 +18,18 @@ const dist2D = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 /** 구역 이름 -> 사람이 읽는 이름 ('LIBRARY' -> '서재'). */
 const ZONE_LABEL = new Map(AREAS.map((a) => [a.name, a.label]));
 const zoneLabel = (name) => (name ? ZONE_LABEL.get(name) || name : '위치 확인 필요');
-/** "거래 장부 · 서재" 처럼 무엇이 어디에 남았는지 한 줄로. */
-const whereLeft = (list) => list
-  .map((e) => [e.label, e.room ? zoneLabel(e.room) : null].filter(Boolean).join(' · '))
-  .filter(Boolean).join(' / ');
+/**
+ * "거래 장부 · 서재" 처럼 무엇이 어디에 남았는지 한 줄로.
+ * 화면의 목표 패널은 좁다. 두 곳까지만 적고 나머지는 개수로 줄인다.
+ */
+const WHERE_SHOWN = 2;
+function whereLeft(list) {
+  const named = list
+    .map((e) => [e.label, e.room ? zoneLabel(e.room) : null].filter(Boolean).join(' · '))
+    .filter(Boolean);
+  if (named.length <= WHERE_SHOWN) return named.join(' / ');
+  return `${named.slice(0, WHERE_SHOWN).join(' / ')} 외 ${named.length - WHERE_SHOWN}곳`;
+}
 
 /** 더 이상 위협이 아닌 상태: 쓰러졌거나, 체포됐거나, 손을 들었다. */
 export const neutralised = (s) => !s.alive || s.arrested || s.state === 'surrender';

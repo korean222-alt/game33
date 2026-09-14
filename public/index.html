@@ -110,7 +110,8 @@
   #objectives { list-style:none; margin:7px 0 0; padding:0; }
   #objectives .obj { display:flex; align-items:flex-start; gap:6px; font-size:11.5px; line-height:1.55; color:#d3cdbd; }
   #objectives .obj i { width:7px; height:7px; border:1px solid var(--dim); border-radius:2px; flex:none; margin-top:4px; }
-  #objectives .obj em { display:block; font-style:normal; font-size:10.5px; color:var(--dim); }
+  #objectives .obj > span { min-width:0; overflow-wrap:anywhere; }
+  #objectives .obj em { display:block; font-style:normal; font-size:10.5px; color:var(--dim); line-height:1.45; }
   #objectives .obj.done { color:var(--ok); } #objectives .obj.done i { background:var(--ok); border-color:var(--ok); }
   #objectives .obj.bonus { color:#a9a394; } #objectives .obj.bonus i { border-radius:50%; }
   #objectives .obj.failed { color:var(--danger); } #objectives .obj.failed i { background:var(--danger); border-color:var(--danger); }
@@ -130,7 +131,8 @@
   #nade { font-size:11.5px; color:var(--accent); letter-spacing:.06em; margin-top:3px; }
   #nade.empty { color:var(--dim); }
 
-  #banner { position:absolute; left:0; right:0; top:34%; text-align:center; font-size:19px; font-weight:700;
+  /* 안내 문구는 화면 위쪽에 띄운다. 가운데에 두면 조준선과 문 앞 상황을 가린다. */
+  #banner { position:absolute; left:0; right:0; top:13%; text-align:center; font-size:18px; font-weight:700;
     letter-spacing:.05em; text-shadow:0 2px 12px #000; opacity:0; transition:opacity .2s; }
   #defuse { position:absolute; left:50%; top:58%; transform:translateX(-50%); text-align:center;
     background:rgba(10,9,6,.8); border:1px solid var(--line); border-radius:9px; padding:9px 16px; min-width:184px; }
@@ -140,6 +142,11 @@
   #door { position:absolute; left:50%; top:64%; transform:translateX(-50%); text-align:center;
     background:rgba(10,9,6,.78); border:1px solid var(--line); border-radius:9px; padding:7px 14px; }
   #doorTxt { font-size:12.5px; font-weight:700; letter-spacing:.05em; }
+  .soundRow { display:flex; align-items:center; gap:10px; margin:2px 0 4px; }
+  .soundRow input[type=range] { flex:1; accent-color:var(--accent); }
+  button.small { padding:7px 12px; font-size:12px; flex:none; }
+  .soundState { font-size:11.5px; color:var(--dim); margin-bottom:6px; min-height:15px; }
+  .soundState.ok { color:var(--ok); } .soundState.bad { color:var(--danger); }
   .glossary { margin-top:9px; padding-top:9px; border-top:1px solid var(--line); line-height:1.65; }
   .glossary u { text-decoration:none; color:var(--accent); font-weight:700; }
   #doorActions { font-size:11px; color:var(--dim); margin-top:3px; white-space:pre-line; line-height:1.55; }
@@ -357,6 +364,11 @@
       <option value="medium">보통 — 가벼운 렌더링</option><option value="low">낮음 — 성능 우선</option>
     </select>
     <label><input id="soundEnabled" type="checkbox" checked> 효과음 · 목소리 (총성, 장전, 수갑, 문, 비명, 구두 경고)</label>
+    <div class="soundRow">
+      <input type="range" id="volumeIn" min="0" max="100" step="5" value="80" aria-label="소리 크기">
+      <button id="btnSoundTest" class="ghost small">소리 테스트</button>
+    </div>
+    <div class="soundState" id="soundState">소리 테스트를 눌러 들리는지 확인하세요.</div>
     <label><input id="autoQuality" type="checkbox" checked> 프레임이 낮으면 자동으로 품질 조절</label>
     <div class="divider"></div>
 

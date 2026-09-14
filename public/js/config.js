@@ -145,6 +145,7 @@ export const QUALITY = {
 
 export const SETTINGS_DEFAULT = {
   soundEnabled: true,
+  volume: 0.8,            // 0~1. 메뉴에서 조절한다
   quality: 'high',
   autoScale: true,        // FPS 보고 자동으로 품질 낮추기
   sensitivity: 1.0,       // 터치 시점 감도

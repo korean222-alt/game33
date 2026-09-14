@@ -36,20 +36,20 @@ const WORK_SOUND_GAP = 420;   // 길게 누르는 작업의 소리 간격(ms)
 const HURT_VOICE_GAP = 320;   // 같은 사람의 비명이 겹치지 않게
 const SPEECH_RANGE = 16;      // 말소리가 들리는 거리(m)
 
-/* 구두 경고. 실제로 입 밖으로 나가는 말이라 영어로 외치고, 뜻은 자막으로 준다. */
+/* 대사. 입 밖으로 나가는 말이라 영어로 한다. 화면에는 띄우지 않는다. */
 const SHOUT_LINES = [
-  { say: 'Police! Drop the weapon!', sub: '경찰이다! 무기 버려!' },
-  { say: 'Hands up! Get down now!', sub: '손 들어! 엎드려!' },
-  { say: 'Surrender! You are surrounded!', sub: '항복해! 포위됐다!' },
-  { say: 'Drop it! Last warning!', sub: '버려! 마지막 경고다!' },
+  'Police! Drop the weapon!',          // 경찰이다! 무기 버려!
+  'Hands up! Get down now!',           // 손 들어! 엎드려!
+  'Surrender! You are surrounded!',    // 항복해! 포위됐다!
+  'Drop it! Last warning!',            // 버려! 마지막 경고다!
 ];
 const SURRENDER_LINES = [
-  { say: "Okay, okay! I give up!", sub: '알았어, 알았다고! 항복이다!' },
-  { say: "Don't shoot! I'm done!", sub: '쏘지 마! 그만할게!' },
+  'Okay, okay! I give up!',            // 알았어, 항복이다!
+  "Don't shoot! I'm done!",            // 쏘지 마! 그만할게!
 ];
 const DEFY_LINES = [
-  { say: "You'll have to come get me!", sub: '올 테면 와 봐!' },
-  { say: 'Never! Take them down!', sub: '어림없다! 쏴 버려!' },
+  "You'll have to come get me!",       // 올 테면 와 봐!
+  'Never! Take them down!',            // 어림없다! 쏴 버려!
 ];
 const pickLine = (lines) => lines[Math.floor(Math.random() * lines.length)];
 
@@ -139,7 +139,10 @@ export class Game {
     this.player = new LocalPlayer(this.camera, this.world.scene, this.assets, this.settings,
       () => this.doors.colliders());
     this.input = new Input(this.canvas, this.settings);
-    this.audio = new GameAudio({ enabled: this.settings.soundEnabled !== false });
+    this.audio = new GameAudio({
+      enabled: this.settings.soundEnabled !== false,
+      volume: Number.isFinite(this.settings.volume) ? this.settings.volume : 0.8,
+    });
     this.audio.bind(document);
 
     // Prepare static and skinned shader variants while the loading screen is up.
@@ -293,12 +296,11 @@ export class Game {
       this._say(pickLine(SURRENDER_LINES), d, { pitch: 1.15, rate: 1.15 });
     });
 
-    // 경고를 무시하고 덤비는 자. 소리와 자막으로 바로 경고한다.
+    // 경고를 무시하고 덤비는 자. 화면 글자 대신 소리와 방향 표시로 알린다.
     s.on('npcDefy', (d) => {
       if (!Number.isFinite(d?.x)) return;
       this.audio?.scream(d, 'defy', this._occluded(d));
       this._say(pickLine(DEFY_LINES), d, { pitch: 0.85, rate: 1.1 });
-      this.hud.banner('경고 무시 — 저항한다!', 1800);
       this.hud.threat(this._bearingTo(d.x, d.z), 'spot', 1800);
     });
 
@@ -368,7 +370,6 @@ export class Game {
       this.blindUntil = performance.now() + d.seconds * 1000;
       this._blindTotal = d.seconds * 1000;
       this.audio?.tinnitus(d.seconds);
-      this.hud.banner(`섬광 — ${d.seconds.toFixed(1)}초간 시야 상실`, 1600);
     });
 
     s.on('siteProgress', (d) => {
@@ -922,51 +923,43 @@ export class Game {
    *  구두 경고는 실제로 들려야 압박이 된다. 브라우저 음성 합성으로 영어로
    *  외치고, 무슨 뜻인지는 화면에 같이 띄운다.
    * ----------------------------------------------------------------------- */
+  /**
+   * 구두 경고.
+   *
+   * 화면에는 아무것도 띄우지 않는다. 자막이 뜨면 시야 한가운데를 가리고,
+   * 어차피 이건 "내가 소리를 질렀다" 는 행동이라 귀로 확인하는 편이 맞다.
+   */
   _shout(now) {
     if (now - (this._lastShoutAt || 0) < SHOUT_GAP) return;
     this._lastShoutAt = now;
-    const line = pickLine(SHOUT_LINES);
     this.audio?.scream(null, 'shout');
-    this.audio?.speak(line.say, { rate: 1.15, pitch: 0.95 });
-    this.hud.banner(`“${line.say}”  ${line.sub}`, 2200);
+    this.audio?.speak(pickLine(SHOUT_LINES), { rate: 1.15, pitch: 0.95 });
     this.socket.emit('shout');
   }
 
-  /** 경고 결과 보고. 아무 일도 없었으면 왜 없었는지 알려 준다. */
+  /**
+   * 경고 결과. 화면 한가운데를 가리지 않도록 오른쪽 위 기록에만 한 줄 남긴다.
+   * 항복처럼 바로 행동해야 하는 것만 적고, 나머지는 소리로 안다.
+   */
   _reportShout(tally) {
     if (!tally || !this.matchActive) return;
-    if (tally.surrender > 0) {
-      this.hud.killfeed(`${tally.surrender}명 항복 — F 길게 눌러 체포`);
-      return;
-    }
-    if (tally.defy > 0) return;                    // npcDefy 가 이미 알린다
-    if (tally.heard === 0) {
-      this.hud.banner('아무도 듣지 못했다 — 보이는 거리에서 외쳐야 한다', 2200);
-      return;
-    }
-    if (tally.aimed === 0) {
-      this.hud.banner('겨누지 않으면 겁먹지 않는다 — 조준한 채로 경고', 2200);
-      return;
-    }
-    if (tally.civilians > 0 && tally.shaken === 0) {
-      this.hud.killfeed('민간인에게 지시 전달');
-      return;
-    }
-    this.hud.killfeed('경고 — 상대가 흔들린다 (한 번 더)');
+    if (tally.surrender > 0) this.hud.killfeed(`${tally.surrender}명 항복 — F 길게 눌러 체포`);
   }
 
-  /** 말 한마디. 가깝고 벽이 없을 때만 실제로 발음한다. 자막은 항상 남긴다. */
+  /**
+   * 말 한마디. 가깝고 벽이 없을 때만 발음한다.
+   * 화면에는 남기지 않는다 — 대사는 소리로만 듣는다.
+   */
   _say(line, position, opts = {}) {
     if (!line) return;
-    this.hud.killfeed(`“${line.sub}”`);
-    if (!position) { this.audio?.speak(line.say, opts); return; }
+    if (!position) { this.audio?.speak(line, opts); return; }
     const distance = Math.hypot(
       position.x - this.camera.position.x, position.z - this.camera.position.z);
     const t = performance.now();
     if (distance > SPEECH_RANGE || t - this._lastSpeech < 900) return;
     if (this._occluded(position)) return;
     this._lastSpeech = t;
-    this.audio?.speak(line.say, opts);
+    this.audio?.speak(line, opts);
   }
 
   /** 비명. 같은 사람이 연사에 맞을 때 소리가 겹치지 않게 간격을 둔다. */

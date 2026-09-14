@@ -1,7 +1,20 @@
 // Original procedural effects; no downloaded recordings or external requests.
 // AudioContext is created/resumed only by a user gesture (including iOS).
+
+/*
+ * 출력 크기.
+ *
+ * 헤드리스 브라우저에서 오프라인 렌더링으로 재 보니 총성이 최대 0.25(-12dBFS),
+ * 비명·수갑·장전은 0.03~0.08(-30~-22dBFS)밖에 나오지 않았다. 소리가 "안 나는"
+ * 게 아니라 들리지 않을 만큼 작았다. 전체를 올리고, 목소리 계열은 필터가 먹는
+ * 만큼 따로 더 올린다. 마지막에 리미터가 뭉개지지 않게 잡아 준다.
+ *   node audio-probe.mjs 로 언제든 다시 잴 수 있다.
+ */
+const BOOST = 2.0;        // 모든 소리 공통 배율
+const VOX_MAKEUP = 4;     // 대역통과 두 겹을 지나며 잃는 만큼 목소리에 더 준다
+
 export class GameAudio {
-  constructor({ enabled = true, volume = 0.55, contextFactory } = {}) {
+  constructor({ enabled = true, volume = 0.8, contextFactory } = {}) {
     this.enabled = enabled;
     this.volume = volume;
     this.contextFactory = contextFactory || (() => {
@@ -46,13 +59,17 @@ export class GameAudio {
         if (!this.context) return;
         this.master = this.context.createGain();
         this.master.gain.value = this.volume;
+        // 리미터. 총성과 폭발이 동시에 터져도 찢어지지 않게 꼭대기만 눌러 준다.
+        // 없으면 크기를 올린 만큼 그대로 클리핑된다.
         this.master.connect(this.context.destination);
         const length = this.context.sampleRate;
         this.noise = this.context.createBuffer(1, length, length);
         const samples = this.noise.getChannelData(0);
         for (let i = 0; i < length; i++) samples[i] = Math.random() * 2 - 1;
       }
-      if (this.context.state === 'suspended') await this.context.resume();
+      // iOS 는 전화가 오면 'interrupted' 로 간다. 'suspended' 만 보면 그 뒤로
+      // 소리가 영영 돌아오지 않는다.
+      if (this.context.state !== 'running') await this.context.resume();
       this.blocked = this.context.state !== 'running';
     } catch { /* Unsupported/blocked audio must not stop gameplay. */ }
   }
@@ -60,8 +77,14 @@ export class GameAudio {
   setEnabled(enabled) {
     this.enabled = !!enabled;
     if (this.master) this.master.gain.value = this.enabled ? this.volume : 0;
-    if (!this.enabled) this.stop();
+    if (!this.enabled) { this.stop(); this.cancelSpeech(); }
     else void this.unlock();
+  }
+
+  /** 0~1. 메뉴의 소리 크기 조절. */
+  setVolume(volume) {
+    this.volume = Math.max(0, Math.min(1.5, Number(volume) || 0));
+    if (this.master) this.master.gain.value = this.enabled ? this.volume : 0;
   }
 
   setListener(position, yaw) {
@@ -71,9 +94,9 @@ export class GameAudio {
 
   _bus(position, occluded = false) {
     const context = this.context;
-    // 멈춰 있는(suspended) 컨텍스트를 그냥 지나치면 한 번 막힌 소리가 끝까지
-    // 돌아오지 않는다. 다음 소리를 위해 깨우기를 다시 시도한다.
-    if (this.enabled && !this.closed && context?.state === 'suspended') void this.unlock();
+    // 멈춘 컨텍스트를 그냥 지나치면 한 번 막힌 소리가 끝까지 돌아오지 않는다.
+    // 다음 소리를 위해 깨우기를 다시 시도한다.
+    if (this.enabled && !this.closed && context && context.state !== 'running') void this.unlock();
     if (!this.enabled || context?.state !== 'running') return null;
     const gain = context.createGain();
     const filter = context.createBiquadFilter();
@@ -110,8 +133,9 @@ export class GameAudio {
     filter.Q.value = 0.6;
     const envelope = context.createGain();
     const start = context.currentTime + at;
+    const peak = level * BOOST;
     envelope.gain.setValueAtTime(0, start);
-    envelope.gain.linearRampToValueAtTime(level, start + 0.003);
+    envelope.gain.linearRampToValueAtTime(peak, start + 0.003);
     envelope.gain.exponentialRampToValueAtTime(0.0001, start + duration);
     source.connect(filter); filter.connect(envelope); envelope.connect(bus.gain);
     bus.pending++;
@@ -159,8 +183,8 @@ export class GameAudio {
   dryFire() {
     const bus = this._bus();
     if (!bus) return;
-    this._voice(bus, { duration: 0.035, level: 0.22, frequency: 2600 });
-    this._voice(bus, { at: 0.03, duration: 0.03, level: 0.12, frequency: 1500 });
+    this._voice(bus, { duration: 0.035, level: 0.5, frequency: 2600 });
+    this._voice(bus, { at: 0.03, duration: 0.03, level: 0.3, frequency: 1500 });
   }
 
   /** 탄착. 재질에 따라 밝기를 달리한다. */
@@ -168,16 +192,16 @@ export class GameAudio {
     const bus = this._bus(position);
     if (!bus) return;
     const bright = material === 'metal' ? 4200 : material === 'wood' ? 1500 : 2400;
-    this._voice(bus, { duration: 0.06, level: 0.3, frequency: bright });
-    this._voice(bus, { at: 0.01, duration: 0.09, level: 0.14, frequency: 260, tone: true });
+    this._voice(bus, { duration: 0.06, level: 0.45, frequency: bright });
+    this._voice(bus, { at: 0.01, duration: 0.09, level: 0.22, frequency: 260, tone: true });
   }
 
   /** 내가 맞았을 때. 둔탁한 충격 + 짧은 이명. */
   hurt() {
     const bus = this._bus();
     if (!bus) return;
-    this._voice(bus, { duration: 0.14, level: 0.5, frequency: 190 });
-    this._voice(bus, { at: 0.02, duration: 0.3, level: 0.1, frequency: 90, tone: true });
+    this._voice(bus, { duration: 0.14, level: 0.85, frequency: 190 });
+    this._voice(bus, { at: 0.02, duration: 0.3, level: 0.3, frequency: 90, tone: true });
   }
 
   /** 용의자가 나를 발견하고 외치는 소리. 총알보다 먼저 도착한다. */
@@ -197,8 +221,8 @@ export class GameAudio {
       return;
     }
     const flash = type === 'flash';
-    this._voice(bus, { duration: flash ? 0.22 : 0.5, level: 1, frequency: flash ? 1800 : 700 });
-    this._voice(bus, { duration: flash ? 0.3 : 0.8, level: 0.6, frequency: flash ? 140 : 70, tone: true });
+    this._voice(bus, { duration: flash ? 0.22 : 0.5, level: 0.8, frequency: flash ? 1800 : 700 });
+    this._voice(bus, { duration: flash ? 0.3 : 0.8, level: 0.5, frequency: flash ? 140 : 70, tone: true });
     this._voice(bus, { at: 0.06, duration: flash ? 0.5 : 1.1, level: 0.22, frequency: 380 });
   }
 
@@ -215,7 +239,7 @@ export class GameAudio {
     if (!bus) return;
     this._voice(bus, {
       duration: 0.07,
-      level: crouch ? 0.05 : sprint ? 0.16 : 0.1,
+      level: crouch ? 0.12 : sprint ? 0.4 : 0.26,
       frequency: crouch ? 420 : 620,
     });
   }
@@ -231,17 +255,17 @@ export class GameAudio {
     if (!bus) return;
     const total = Math.max(0.5, Math.min(8, Number(seconds) || 2.3));
     const stages = [
-      [0, 1600, 0.22, 0.06],     // 탄창 멈치
-      [0.2, 650, 0.3, 0.11],     // 빈 탄창이 빠져 바닥에 떨어진다
-      [0.65, 1100, 0.4, 0.09],   // 새 탄창 삽입
-      [0.9, 2800, 0.32, 0.07],   // 노리쇠 전진
+      [0, 1600, 0.5, 0.06],      // 탄창 멈치
+      [0.2, 650, 0.62, 0.11],    // 빈 탄창이 빠져 바닥에 떨어진다
+      [0.65, 1100, 0.8, 0.09],   // 새 탄창 삽입
+      [0.9, 2800, 0.7, 0.07],    // 노리쇠 전진
     ];
     const mine = !position;
     for (const [fraction, frequency, level, duration] of stages) {
       this._voice(bus, { at: total * fraction, duration, frequency, level }, mine);
     }
     // 빈 탄창이 바닥에 닿는 소리
-    this._voice(bus, { at: total * 0.34, duration: 0.09, frequency: 300, level: 0.12 }, mine);
+    this._voice(bus, { at: total * 0.34, duration: 0.09, frequency: 300, level: 0.3 }, mine);
   }
 
   /**
@@ -260,19 +284,19 @@ export class GameAudio {
     }
     if (action === 'unlock') {
       for (let i = 0; i < 4; i++) {
-        this._voice(bus, { at: 0.1 + i * 0.16, duration: 0.03, level: 0.13, frequency: 3000 + i * 260 });
+        this._voice(bus, { at: 0.1 + i * 0.16, duration: 0.03, level: 0.3, frequency: 3000 + i * 260 });
       }
       return;
     }
     if (action === 'peek') {
-      this._voice(bus, { duration: 0.2, level: 0.05, frequency: 900 });
+      this._voice(bus, { duration: 0.2, level: 0.12, frequency: 900 });
       return;
     }
     // 손잡이가 돌아가고 경첩이 운다.
-    this._voice(bus, { duration: 0.05, level: 0.2, frequency: 2600 });
-    this._voice(bus, { at: 0.06, duration: 0.26, level: 0.16, frequency: 430 });
-    this._voice(bus, { at: 0.08, duration: 0.2, level: 0.12, frequency: 120, tone: true });
-    if (action === 'close') this._voice(bus, { at: 0.3, duration: 0.08, level: 0.3, frequency: 260 });
+    this._voice(bus, { duration: 0.05, level: 0.42, frequency: 2600 });
+    this._voice(bus, { at: 0.06, duration: 0.26, level: 0.34, frequency: 430 });
+    this._voice(bus, { at: 0.08, duration: 0.2, level: 0.26, frequency: 120, tone: true });
+    if (action === 'close') this._voice(bus, { at: 0.3, duration: 0.08, level: 0.5, frequency: 260 });
   }
 
   /* ======================================================================= *
@@ -309,9 +333,10 @@ export class GameAudio {
     }
 
     const envelope = context.createGain();
+    const peak = level * BOOST * VOX_MAKEUP;
     envelope.gain.setValueAtTime(0, start);
-    envelope.gain.linearRampToValueAtTime(level, start + Math.min(0.045, duration * 0.18));
-    envelope.gain.linearRampToValueAtTime(level * 0.72, start + duration * 0.62);
+    envelope.gain.linearRampToValueAtTime(peak, start + Math.min(0.045, duration * 0.18));
+    envelope.gain.linearRampToValueAtTime(peak * 0.72, start + duration * 0.62);
     envelope.gain.exponentialRampToValueAtTime(0.0001, start + duration);
     tail.connect(envelope);
     envelope.connect(bus.gain);
@@ -369,10 +394,10 @@ export class GameAudio {
     const bus = this._bus(position);
     if (!bus) return;
     for (let i = 0; i < 7; i++) {
-      this._voice(bus, { at: 0.02 + i * 0.032, duration: 0.02, level: 0.2, frequency: 4200 + i * 180 });
+      this._voice(bus, { at: 0.02 + i * 0.032, duration: 0.025, level: 0.5, frequency: 4200 + i * 180 });
     }
-    this._voice(bus, { at: 0.3, duration: 0.05, level: 0.26, frequency: 2600 });
-    this._voice(bus, { at: 0.34, duration: 0.09, level: 0.14, frequency: 480, tone: true });
+    this._voice(bus, { at: 0.3, duration: 0.06, level: 0.62, frequency: 2600 });
+    this._voice(bus, { at: 0.34, duration: 0.11, level: 0.34, frequency: 480, tone: true });
   }
 
   /**
@@ -383,19 +408,19 @@ export class GameAudio {
     const bus = this._bus(position);
     if (!bus) return;
     if (kind === 'evidence') {
-      this._voice(bus, { duration: 0.12, level: 0.16, frequency: 5200 });
-      this._voice(bus, { at: 0.08, duration: 0.1, level: 0.1, frequency: 3400 });
+      this._voice(bus, { duration: 0.12, level: 0.36, frequency: 5200 });
+      this._voice(bus, { at: 0.08, duration: 0.1, level: 0.24, frequency: 3400 });
       return;
     }
     if (kind === 'revive') {
-      this._voice(bus, { duration: 0.09, level: 0.14, frequency: 900 });
-      this._voice(bus, { at: 0.07, duration: 0.07, level: 0.1, frequency: 2200 });
+      this._voice(bus, { duration: 0.09, level: 0.32, frequency: 900 });
+      this._voice(bus, { at: 0.07, duration: 0.07, level: 0.24, frequency: 2200 });
       return;
     }
     // 해체: 금속 공구가 나사를 돌리는 소리 + 회로 신호음
-    this._voice(bus, { duration: 0.05, level: 0.16, frequency: 3000 });
-    this._voice(bus, { at: 0.05, duration: 0.07, level: 0.1, frequency: 1400 });
-    this._voice(bus, { at: 0.13, duration: 0.04, level: 0.09, frequency: 2000, tone: true });
+    this._voice(bus, { duration: 0.05, level: 0.38, frequency: 3000 });
+    this._voice(bus, { at: 0.05, duration: 0.07, level: 0.26, frequency: 1400 });
+    this._voice(bus, { at: 0.13, duration: 0.04, level: 0.22, frequency: 2000, tone: true });
   }
 
   /** 확인음. 해체 완료처럼 "됐다"를 알린다. ok=false 면 실패음. */
@@ -411,18 +436,18 @@ export class GameAudio {
   pickup(position = null) {
     const bus = this._bus(position);
     if (!bus) return;
-    this._voice(bus, { duration: 0.16, level: 0.2, frequency: 4800 });
-    this._voice(bus, { at: 0.14, duration: 0.18, level: 0.16, frequency: 2600 });
-    this._voice(bus, { at: 0.3, duration: 0.06, level: 0.12, frequency: 700 });
+    this._voice(bus, { duration: 0.16, level: 0.4, frequency: 4800 });
+    this._voice(bus, { at: 0.14, duration: 0.18, level: 0.32, frequency: 2600 });
+    this._voice(bus, { at: 0.3, duration: 0.06, level: 0.26, frequency: 700 });
   }
 
   /** 투척물 안전핀과 던지는 동작. */
   pin() {
     const bus = this._bus();
     if (!bus) return;
-    this._voice(bus, { duration: 0.03, level: 0.24, frequency: 5200 });
-    this._voice(bus, { at: 0.05, duration: 0.04, level: 0.16, frequency: 3200 });
-    this._voice(bus, { at: 0.16, duration: 0.12, level: 0.12, frequency: 900 });
+    this._voice(bus, { duration: 0.03, level: 0.5, frequency: 5200 });
+    this._voice(bus, { at: 0.05, duration: 0.04, level: 0.34, frequency: 3200 });
+    this._voice(bus, { at: 0.16, duration: 0.12, level: 0.26, frequency: 900 });
   }
 
   /**
