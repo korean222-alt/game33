@@ -7,6 +7,7 @@
 
 import * as THREE from 'three';
 import { MAP, WALLS, PROPS, LIGHTS, BOMB_SITES, FURNITURE } from './map-data.js';
+import { wallSections } from './wall-sections.js';
 import { QUALITY } from './config.js';
 import { roomMaterials, dressRoom } from './visuals.js';
 
@@ -70,16 +71,22 @@ export class World {
   /* ---- 벽 --------------------------------------------------------------- */
   _buildWalls() {
     for (const w of WALLS) {
-      const geo = new THREE.BoxGeometry(w.w,w.h,w.d);
-      const uv=geo.attributes.uv,n=geo.attributes.normal;
-      for(let i=0;i<uv.count;i++){
-        const width=Math.abs(n.getX(i))>.5?w.d:w.w;
-        const height=Math.abs(n.getY(i))>.5?w.d:w.h;
-        uv.setXY(i,uv.getX(i)*width/3,uv.getY(i)*height/3);
+      for (const section of wallSections(w.h)) {
+        const height = section.top - section.bottom;
+        const geo = new THREE.BoxGeometry(w.w, height, w.d);
+        const uv = geo.attributes.uv, n = geo.attributes.normal;
+        for (let i = 0; i < uv.count; i++) {
+          const width = Math.abs(n.getX(i)) > .5 ? w.d : w.w;
+          const horizontal = Math.abs(n.getY(i)) > .5;
+          uv.setXY(i, uv.getX(i) * width / 3,
+            horizontal ? uv.getY(i) * w.d / 3 :
+              (section.bottom + uv.getY(i) * height) / 3);
+        }
+        const mesh = new THREE.Mesh(geo, this.materials[section.material]);
+        mesh.position.set(w.x, (section.bottom + section.top) / 2, w.z);
+        mesh.castShadow = mesh.receiveShadow = true;
+        this.scene.add(mesh);
       }
-      const mesh=new THREE.Mesh(geo,this.materials.wall);
-      mesh.position.set(w.x,w.h/2,w.z);mesh.castShadow=mesh.receiveShadow=true;
-      this.scene.add(mesh);
     }
   }
 

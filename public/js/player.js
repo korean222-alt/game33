@@ -2,13 +2,15 @@
  *  player.js  -  내 캐릭터 (이동 예측 / 카메라 / 총 뷰모델 / 반동)
  *
  *  이동은 클라이언트가 먼저 계산하고(예측), 서버는 map-data 의 같은 충돌 함수로
- *  한 번 더 보정한다. 둘 다 resolveCircle 을 쓰므로 결과가 거의 같아서
- *  되돌아가는(rubber-band) 현상이 잘 생기지 않는다.
+ *  한 번 더 보정한다. 서버가 확인한 입력 번호로 전송 당시의 위치와 비교해
+ *  네트워크 지연으로 최신 이동이 지워지는 현상을 방지한다.
  * ========================================================================== */
 
 import * as THREE from 'three';
 import { PLAYER, COMBAT, VIEWMODEL } from './config.js';
-import { moveBody, COLLIDERS, overlaps } from './map-data.js';
+import { moveBody, COLLIDERS, overlaps, resolveCircle } from './map-data.js';
+
+import { PredictionHistory } from './prediction-history.js';
 
 export class LocalPlayer {
   constructor(camera, scene, assets, settings) {
@@ -32,7 +34,7 @@ export class LocalPlayer {
     this.spread = COMBAT.spread.idle;
     this.recoil = { x: 0, y: 0 };
     this.bobPhase = 0;
-    this._sent = [];         // 서버로 보낸 최근 위치들 (reconcile 판단용)
+    this._prediction = new PredictionHistory();
 
     this.weapon = 'rifle';
     this.viewmodel = null;
@@ -58,7 +60,7 @@ export class LocalPlayer {
     this._eye = PLAYER.eyeHeight;
     this.muzzleUntil = 0;
     this.spread = COMBAT.spread.idle;
-    this._sent.length = 0;
+    this._prediction.reset();
   }
 
   setWeapon(key) {
@@ -277,17 +279,10 @@ export class LocalPlayer {
     };
   }
 
-  /** 서버로 보낼 입력 상태 */
+  /** 서버로 보낼 입력 상태: 전송 좌표와 이동 번호를 함께 기록한다. */
   netState() {
-    // 보낸 위치를 기억해 둔다. 서버 스냅샷이 이 중 하나와 일치하면
-    // "서버가 내 예측을 그대로 받아들였다"는 뜻이라 보정할 필요가 없다.
-    this._sent.push({ x: this.pos.x, z: this.pos.z });
-    if (this._sent.length > SENT_HISTORY) this._sent.shift();
-
     return {
-      x: +this.pos.x.toFixed(3),
-      y: +this.pos.y.toFixed(3),
-      z: +this.pos.z.toFixed(3),
+      ...this._prediction.record(this.pos),
       yaw: +this.yaw.toFixed(3),
       pitch: +this.pitch.toFixed(3),
       moving: this.moving ? 1 : 0,
@@ -296,34 +291,20 @@ export class LocalPlayer {
     };
   }
 
-  /**
-   * 서버가 보정한 위치를 반영.
-   *
-   * 주의: 스냅샷(20Hz)은 렌더 프레임보다 훨씬 자주 올 수 있다. 그때 "현재 예측 위치"와
-   * 서버 위치를 비교해 매번 끌어당기면, 아직 서버에 닿지 않은 내 최신 이동이 계속
-   * 지워져서 제자리걸음이 된다. 그래서 최근에 "보낸" 위치들과 먼저 대조한다.
-   */
-  reconcile(sx, sz) {
-    // 서버 위치가 내가 보낸 위치 중 하나와 같다면 서버는 내 예측을 그대로 받았다.
-    // 지금 내가 그보다 앞서 있는 건 정상(서버가 아직 못 받은 이동)이므로 건드리지 않는다.
-    for (const p of this._sent) {
-      if (Math.hypot(sx - p.x, sz - p.z) < 0.12) return;
-    }
-
-    // 여기까지 왔으면 서버가 실제로 다른 위치로 보정한 것 (벽 뚫기 방지 등)
-    const d = Math.hypot(sx - this.pos.x, sz - this.pos.z);
-    if (d > 1.2) {          // 순간이동 수준으로 어긋남 -> 즉시 맞춘다
-      this.pos.x = sx; this.pos.z = sz;
-      this.vel.x = this.vel.z = 0;
-      this._sent.length = 0;
-    } else if (d > 0.18) {  // 살짝 어긋남 -> 티 안 나게 끌어당긴다
-      this.pos.x += (sx - this.pos.x) * 0.18;
-      this.pos.z += (sz - this.pos.z) * 0.18;
-    }
+  /** 서버가 확인한 입력의 오차만 적용하고 이후의 이동은 보존한다. */
+  reconcile(sx, sz, sy, inputSeq) {
+    const delta = this._prediction.acknowledge(inputSeq, { x: sx, y: sy, z: sz });
+    if (!delta || (!delta.x && !delta.y && !delta.z)) return;
+    const height = this.crouching ? 1.3 : PLAYER.height;
+    this.pos.y = Math.max(0, this.pos.y + delta.y);
+    const fixed = resolveCircle(this.pos.x + delta.x, this.pos.z + delta.z,
+      PLAYER.radius, COLLIDERS, this.pos.y, height);
+    this.pos.x = fixed.x;
+    this.pos.z = fixed.z;
+    if (delta.x) this.vel.x = 0;
+    if (delta.z) this.vel.z = 0;
+    if (delta.y) { this.vel.y = 0; this.onGround = false; }
   }
 }
 
 const lerp = (a, b, k) => a + (b - a) * k;
-
-// 보낸 위치를 몇 개까지 기억할지 (20Hz 기준 약 0.75초)
-const SENT_HISTORY = 15;

@@ -285,7 +285,7 @@ export class Game {
       this.hud.setDead(false);
     }
 
-    if (me.alive) this.player.reconcile(me.x, me.z);
+    if (me.alive) this.player.reconcile(me.x, me.z, me.y, me.inputSeq);
 
     this.hud.setHp(me.hp);
     this.hud.setAmmo(me.ammo, me.reserve, me.reloading, this.weaponName);
@@ -359,7 +359,7 @@ export class Game {
     const step = 1 / NET.inputHz;
     if (this._netAccum >= step) {
       this._netAccum %= step;
-      if (this.alive) this.socket.emit('input', this.player.netState());
+      if (this.alive && this.socket.connected) this.socket.volatile.emit('input', this.player.netState());
     }
   }
 

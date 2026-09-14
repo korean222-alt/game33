@@ -5,7 +5,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-import { MAP, ROOMS, WALLS, LIGHTS } from './map-data.js';
+import { MAP, ROOMS, LIGHTS } from './map-data.js';
 
 export function roomMaterials() {
   const loader = new THREE.TextureLoader();
@@ -17,6 +17,8 @@ export function roomMaterials() {
     return t;
   };
   return {
+    plaster: new THREE.MeshStandardMaterial({ color: 0xe8dfca, roughness: .82 }),
+    brass: new THREE.MeshStandardMaterial({ color: 0xbfa16b, roughness: .3, metalness: .8 }),
     floor: new THREE.MeshStandardMaterial({
       map: tex('concrete-color.jpg', true), normalMap: tex('concrete-normal.jpg'),
       normalScale: new THREE.Vector2(.65,.65), roughnessMap: tex('concrete-rough.jpg'),
@@ -47,7 +49,6 @@ export function dressRoom(scene, renderer) {
   const target=pmrem.fromScene(env,.04);
   scene.environment=target.texture;scene.environmentIntensity=.5;
   scene.userData.environmentTarget=target;env.dispose();pmrem.dispose();
-  const plaster=new THREE.MeshStandardMaterial({color:0xe8dfca,roughness:.82});
   const brass=new THREE.MeshStandardMaterial({color:0xbfa16b,roughness:.3,metalness:.8});
   const wood=new THREE.MeshStandardMaterial({color:0x312017,roughness:.65});
   const glow=new THREE.MeshStandardMaterial({color:0xffe9bf,emissive:0xffd294,emissiveIntensity:2.4});
@@ -55,13 +56,6 @@ export function dressRoom(scene, renderer) {
     const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material);
     m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;scene.add(m);return m;
   };
-  // Wall panels and cornices stay INSIDE the wall collider's footprint.
-  for(const w of WALLS){
-    box(w.x,.6,w.z,w.w,1.2,w.d,plaster);
-    box(w.x,1.22,w.z,w.w,.055,w.d,brass);
-    box(w.x,6.5,w.z,w.w,.3,w.d,plaster);
-    box(w.x,6.7,w.z,w.w,.04,w.d,brass);
-  }
   // Fine coffer lines, recessed in the ceiling.
   for(let x=-21;x<=21;x+=6)box(x,6.94,0,.1,.1,35.6,wood);
   for(let z=-15;z<=15;z+=6)box(0,6.94,z,47.6,.1,.1,wood);

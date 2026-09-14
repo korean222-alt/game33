@@ -117,6 +117,7 @@ class Room {
       reloadUntil: 0,
       lastShot: 0,
       moving: 0, sprint: 0, crouch: 0,
+      inputSeq: 0,
       defusing: null,
       kills: 0,
       ping: 0,
@@ -446,6 +447,7 @@ function startMatch(room, io) {
     p.reserve = WEAPONS[p.weapon].reserve;
     p.reloadUntil = 0; p.defusing = null;
     p.lastShot = 0; p.moving = p.sprint = p.crouch = 0;
+    p.inputSeq = 0;
     i++;
   }
 
@@ -563,6 +565,7 @@ function tickRoom(room, io) {
       hp: p.hp, alive: p.alive, moving: p.moving, sprint: p.sprint, crouch: p.crouch,
       ammo: p.ammo, reserve: p.reserve, reloading: p.reloadUntil > 0 ? 1 : 0,
       defusing: p.defusing ? 1 : 0,
+      inputSeq: p.inputSeq,
     })),
     bots: room.bots.map((b) => ({
       id: b.id, x: +b.x.toFixed(3), z: +b.z.toFixed(3), yaw: +b.yaw.toFixed(3),
@@ -660,6 +663,8 @@ io.on('connection', (socket) => {
   socket.on('input', (d) => {
     if (!me || !room || room.state !== 'active' || !me.alive) return;
     if (!d || !['x', 'y', 'z', 'yaw', 'pitch'].every(k => Number.isFinite(d[k]))) return;
+    if (d.seq !== undefined &&
+        (!Number.isSafeInteger(d.seq) || d.seq <= me.inputSeq)) return;
     // 위치는 클라 예측을 신뢰하되 서버에서 한 번 더 충돌 보정 (벽 뚫기 방지)
     const height = d.crouch ? 1.3 : 1.8;
     me.y = clamp(d.y, 0, MAP.height - height);
@@ -671,6 +676,7 @@ io.on('connection', (socket) => {
     me.moving = d.moving ? 1 : 0;
     me.sprint = d.sprint ? 1 : 0;
     me.crouch = d.crouch ? 1 : 0;
+    if (d.seq !== undefined) me.inputSeq = d.seq;
   });
 
   socket.on('shoot', (d, cb) => {
