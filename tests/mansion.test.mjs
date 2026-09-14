@@ -21,7 +21,8 @@ test('circle corners are not oversized invisible squares; rotated boxes use thei
 });
 test('props have scaled collider dimensions identical to model normalization',()=>{
   for(const p of PROPS){
-    const [w,h,d]=MODELS[p.model].fit.size;
+    const fit=MODELS[p.model].fit;
+    const [w,h,d]=fit.size??[1.6,fit.height,1.6];
     assert.deepEqual(p.col,{w:w*p.s,h:h*p.s,d:d*p.s});
     const c=COLLIDERS.find(c=>c.x===p.x&&c.z===p.z&&c.h===p.col.h);
     assert.equal(c.y,p.yOff||0);assert.equal(c.ry,p.ry||0);

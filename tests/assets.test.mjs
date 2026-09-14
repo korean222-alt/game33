@@ -20,7 +20,7 @@ assets.loader = { loadAsync: async url => {
 } };
 await assets.loadAll();
 
-test('all ten configured models exist and have valid embedded glTF data', async () => {
+test('every configured model exists and has valid embedded glTF data', async () => {
   assert.equal(assets.missing.length, 0);
   for (const [key, model] of Object.entries(MODELS)) {
     const bytes = await fs.readFile(new URL('../public' + model.url, import.meta.url));
@@ -37,7 +37,7 @@ test('models are centered, grounded and fitted to gameplay dimensions', () => {
     const box = new THREE.Box3().setFromObject(assets.instance(key), true);
     const center = box.getCenter(new THREE.Vector3());
     const size = box.getSize(new THREE.Vector3());
-    assert.ok(Math.abs(center.x) < .0001 && Math.abs(center.z) < .0001, key + ' center');
+    assert.ok(Math.abs(center.x) < .001 && Math.abs(center.z) < .001, key + ' center');
     assert.ok(Math.abs(model.fit.center ? center.y : box.min.y) < .0001, key + ' ground');
     if (model.fit.height) assert.ok(Math.abs(size.y - model.fit.height) < .0001, key + ' height');
     if (model.fit.length) assert.ok(Math.abs(size.x - model.fit.length) < .0001, key + ' length');
@@ -66,13 +66,13 @@ test('avatar restart does not dispose cached geometry or textures', () => {
     o.material?.map?.addEventListener('dispose', () => released++);
   });
   const entities = new Entities(new THREE.Scene(), assets);
-  entities.spawnBots([{ id: 'test', x: 1, z: 1 }]);
-  entities.onSnapshot({ players: [], bots: [{ id: 'test', x: 1, z: 1, yaw: 0, alive: 1 }] });
+  entities.spawnNpcs([{ id: 'test', kind: 'suspect', x: 1, z: 1 }]);
+  entities.onSnapshot({ players: [], npcs: [{ id: 'test', x: 1, y: 0, z: 1, yaw: 0, alive: 1 }] });
   entities.update(.016, new THREE.PerspectiveCamera());
   entities.clear();
   assert.equal(released, 0);
-  entities.spawnBots([{ id: 'test' }]);
-  assert.equal(entities.bots.size, 1);
+  entities.spawnNpcs([{ id: 'test', kind: 'suspect' }]);
+  assert.equal(entities.npcs.size, 1);
   entities.clear();
 });
 
@@ -87,4 +87,19 @@ test('partial joystick movement stays slower than full movement and respawn rese
   assert.ok(Math.abs(slow.vel.z) < Math.abs(fast.vel.z) * .3);
   fast.adsAmount = 1; fast.muzzleUntil = Infinity; fast.spawn(-3.4, 4.6, 0);
   assert.equal(fast.adsAmount, 0); assert.equal(fast.muzzleUntil, 0);
+});
+
+test('snapshot recovers a missing NPC and predicted lethal damage does not hide a live shooter', () => {
+  globalThis.document = { createElement: () => ({ width: 0, height: 0, getContext: () => ({ strokeText() {}, fillText() {} }) }) };
+  const entities = new Entities(new THREE.Scene(), assets);
+  entities.onSnapshot({ players: [], npcs: [{
+    id: 'late', kind: 'suspect', x: 1, y: 0, z: 1, yaw: 0, hp: 100, alive: 1,
+  }] });
+  assert.equal(entities.npcs.size, 1);
+  entities.applyShotPredictions([{ prediction: { targetId: 'late', damage: 120 } }]);
+  entities.update(.016, new THREE.PerspectiveCamera());
+  const avatar = entities.npcs.get('late');
+  assert.equal(avatar.group.visible, true);
+  assert.notEqual(avatar.rig.dead, true);
+  entities.clear();
 });

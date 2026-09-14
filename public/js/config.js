@@ -29,8 +29,13 @@ export const MODELS = {
   well:       { url: '/assets/models/well.glb',        scale: 1, rotY: 0, fit: { height: 2.35 },
                 placeholder: { type: 'cylinder', r: 1.05, h: 2.35, color: 0x555049 } },
 
-  // --- 캐릭터 (팀원 + 적 봇이 같은 모델을 쓰고 색만 바꾼다) ---
-  character:  { url: '/assets/models/character.glb',   scale: 1, rotY: 0, fit: { height: 1.8 },
+  // --- 캐릭터 (대원 · 용의자 · 민간인이 같은 모델을 쓰고 색만 바꾼다)
+  //     첨부한 Mixamo FBX 묶음을 scripts/import-animations.mjs 로 합친 파일이다.
+  //     클립 16개(대기/조준/앉기/걷기/달리기/측면/후진/사격/재장전/점프/피격/사망)가
+  //     들어 있고 character-animation.js 가 골라 재생한다. ---
+  //     Mixamo 캐릭터는 +Z 를 보고 서 있다. 게임 규약(yaw 0 = -Z)에 맞추려면
+  //     rotY 로 180도 돌려 놓아야 한다.
+  character:  { url: '/assets/models/character-animated.glb', scale: 1, rotY: Math.PI, fit: { height: 1.8 },
                 placeholder: { type: 'humanoid', h: 1.8, color: 0x7f8a74 } },
 
   // --- 총기 (1인칭 뷰모델 + 다른 플레이어 손에 들리는 모델) ---
@@ -127,6 +132,7 @@ export const QUALITY = {
 };
 
 export const SETTINGS_DEFAULT = {
+  soundEnabled: true,
   quality: 'high',
   autoScale: true,        // FPS 보고 자동으로 품질 낮추기
   sensitivity: 1.0,       // 터치 시점 감도

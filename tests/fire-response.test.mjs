@@ -23,6 +23,7 @@ test('shot effects and ammo respond before any acknowledgement; responses do not
       aimDirection: () => new THREE.Vector3(0, 0, -1), muzzlePosition: () => ({ x: .1, y: 1.5, z: -.5 }),
       kick() {}, addShotSpread() {}, netState: () => ({ seq: 1, x: 0, y: 0, z: 0 }) },
     matchActive: true, alive: true, _lastShotAt: -Infinity, _matchVersion: 1,
+    doors: { colliders: () => [] },
     ammo: 30, reserve: 150, reloading: false, weaponName: 'rifle', shots: new ShotState(),
     hud: { setAmmo() {}, flashHit() {}, banner() {} },
     entities: { shotTargets: () => [], applyShotPredictions() {}, confirmBotHealth() {},

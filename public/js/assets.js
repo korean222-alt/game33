@@ -132,6 +132,11 @@ export class AssetManager {
   isPlaceholder(key) {
     return this.cache.get(key)?.isPlaceholder ?? true;
   }
+
+  /** GLB 에 들어 있는 애니메이션 클립 목록 (없으면 빈 배열). */
+  animations(key) {
+    return this.cache.get(key)?.animations ?? [];
+  }
 }
 
 /* ========================================================================== *

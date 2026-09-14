@@ -4,7 +4,9 @@
  *  게임 로직은 이 클래스가 내놓는 "의도"만 본다. 어떤 기기로 조작하든 결과는 같다.
  *    move   : {x, y}  좌우 / 앞뒤 (-1 ~ 1)
  *    look   : {dx, dy} 이번 프레임에 돌린 양 (라디안). 읽으면 0으로 초기화된다.
- *    fire / ads / sprint / crouch / jump / reload / use : boolean
+ *    fire / ads / sprint / crouch / use : 누르는 동안 true
+ *    jump / reload / door / peek / kick / shout / throwGrenade : 한 번만 소비된다
+ *    grenadeSlot : 1~3 (섬광 / 가스 / 파편)
  * ========================================================================== */
 
 const MOUSE_SENS = 0.0022;    // 라디안 / px
@@ -24,9 +26,16 @@ export class Input {
     this.ads = false;
     this.sprint = false;
     this.crouch = false;
+    this.use = false;
+    this.peek = false;
+
     this.jump = false;
     this.reload = false;
-    this.use = false;
+    this.door = false;
+    this.kick = false;
+    this.shout = false;
+    this.throwGrenade = false;
+    this.grenadeSlot = 0;
 
     this.enabled = false;
     this.locked = false;
@@ -49,7 +58,7 @@ export class Input {
 
   dispose() { this.disable(); this._abort.abort(); }
 
-  enable()  { this.enabled = true; }
+  enable() { this.enabled = true; }
   disable() {
     this.enabled = false;
     this.reset();
@@ -59,12 +68,14 @@ export class Input {
   reset() {
     this._keys.clear();
     this.move.x = this.move.y = 0;
-    this.fire = this.ads = this.sprint = this.crouch = this.jump = this.reload = this.use = false;
+    this.fire = this.ads = this.sprint = this.crouch = this.use = this.peek = false;
+    this.jump = this.reload = this.door = this.kick = this.shout = this.throwGrenade = false;
+    this.grenadeSlot = 0;
     this.look.dx = this.look.dy = 0;
     this._lookTouchId = this._stickTouchId = null;
     const knob = document.getElementById('knob');
     if (knob) knob.style.transform = '';
-    this._resetButtons.forEach(reset => reset());
+    this._resetButtons.forEach((reset) => reset());
   }
 
   /** 이번 프레임 시점 이동량을 읽고 비운다 */
@@ -74,9 +85,14 @@ export class Input {
     return d;
   }
 
-  /** 한 번만 처리해야 하는 입력(점프/장전)을 읽고 비운다 */
-  consumeJump()   { const v = this.jump;   this.jump = false;   return v; }
+  /** 한 번만 처리해야 하는 입력을 읽고 비운다 */
+  consumeJump() { const v = this.jump; this.jump = false; return v; }
   consumeReload() { const v = this.reload; this.reload = false; return v; }
+  consumeDoor() { const v = this.door; this.door = false; return v; }
+  consumeKick() { const v = this.kick; this.kick = false; return v; }
+  consumeShout() { const v = this.shout; this.shout = false; return v; }
+  consumeThrow() { const v = this.throwGrenade; this.throwGrenade = false; return v; }
+  consumeGrenadeSlot() { const v = this.grenadeSlot; this.grenadeSlot = 0; return v; }
 
   /* ---- PC: 키보드 ------------------------------------------------------- */
   _bindKeyboard() {
@@ -87,8 +103,15 @@ export class Input {
       if (this._keys.has(k)) return;   // 키 반복 무시
       this._keys.add(k);
 
-      if (k === 'Space')  this.jump = true;
-      if (k === 'KeyR')   this.reload = true;
+      if (k === 'Space') this.jump = true;
+      if (k === 'KeyR') this.reload = true;
+      if (k === 'KeyE') this.door = true;
+      if (k === 'KeyB') this.kick = true;
+      if (k === 'KeyV') this.shout = true;
+      if (k === 'KeyG') this.throwGrenade = true;
+      if (k === 'Digit1') this.grenadeSlot = 1;
+      if (k === 'Digit2') this.grenadeSlot = 2;
+      if (k === 'Digit3') this.grenadeSlot = 3;
       this._syncKeys();
     };
     const up = (e) => {
@@ -105,10 +128,10 @@ export class Input {
   _syncKeys() {
     const k = this._keys;
     let x = 0, y = 0;
-    if (k.has('KeyW') || k.has('ArrowUp'))    y += 1;
-    if (k.has('KeyS') || k.has('ArrowDown'))  y -= 1;
+    if (k.has('KeyW') || k.has('ArrowUp')) y += 1;
+    if (k.has('KeyS') || k.has('ArrowDown')) y -= 1;
     if (k.has('KeyD') || k.has('ArrowRight')) x += 1;
-    if (k.has('KeyA') || k.has('ArrowLeft'))  x -= 1;
+    if (k.has('KeyA') || k.has('ArrowLeft')) x -= 1;
     const len = Math.hypot(x, y);
     if (len > 1) { x /= len; y /= len; }
 
@@ -117,7 +140,8 @@ export class Input {
 
     this.sprint = k.has('ShiftLeft') || k.has('ShiftRight');
     this.crouch = k.has('ControlLeft') || k.has('ControlRight') || k.has('KeyC');
-    this.use    = k.has('KeyF');
+    this.use = k.has('KeyF');
+    this.peek = k.has('KeyQ');
   }
 
   /* ---- PC: 마우스 + 포인터 락 ------------------------------------------- */
@@ -233,13 +257,19 @@ export class Input {
     this._listen(this.canvas, 'touchcancel', lookEnd);
 
     // 버튼들
-    this._holdBtn('bFire',  (v) => { this.fire = v; });
-    this._holdBtn('bAds',   (v) => { this.ads = v; }, true);
-    this._holdBtn('bSpr',   (v) => { this.sprint = v; }, true);
-    this._holdBtn('bCrch',  (v) => { this.crouch = v; }, true);
-    this._holdBtn('bUse',   (v) => { this.use = v; });
-    this._tapBtn('bJump',   () => { this.jump = true; });
-    this._tapBtn('bRel',    () => { this.reload = true; });
+    this._holdBtn('bFire', (v) => { this.fire = v; });
+    this._holdBtn('bAds', (v) => { this.ads = v; }, true);
+    this._holdBtn('bSpr', (v) => { this.sprint = v; }, true);
+    this._holdBtn('bCrch', (v) => { this.crouch = v; }, true);
+    this._holdBtn('bUse', (v) => { this.use = v; });
+    this._holdBtn('bPeek', (v) => { this.peek = v; });
+    this._tapBtn('bJump', () => { this.jump = true; });
+    this._tapBtn('bRel', () => { this.reload = true; });
+    this._tapBtn('bDoor', () => { this.door = true; });
+    this._tapBtn('bKick', () => { this.kick = true; });
+    this._tapBtn('bShout', () => { this.shout = true; });
+    this._tapBtn('bNade', () => { this.throwGrenade = true; });
+    this._tapBtn('bNadeSel', () => { this.grenadeSlot = -1; });   // -1 = 다음 장비
   }
 
   /** 누르는 동안 true. toggle=true 면 탭할 때마다 on/off */
@@ -276,7 +306,8 @@ export class Input {
 }
 
 const HANDLED_KEYS = new Set([
-  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyR', 'KeyF', 'KeyC', 'Space',
+  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyR', 'KeyF', 'KeyC', 'KeyE', 'KeyQ', 'KeyB', 'KeyV', 'KeyG',
+  'Space', 'Digit1', 'Digit2', 'Digit3',
   'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
   'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight',
 ]);
