@@ -6,7 +6,7 @@
  * ========================================================================== */
 
 import * as THREE from 'three';
-import { MAP, WALLS, PROPS, LIGHTS, BOMB_SITES } from './map-data.js';
+import { MAP, WALLS, PROPS, LIGHTS, BOMB_SITES, FURNITURE } from './map-data.js';
 import { QUALITY } from './config.js';
 import { roomMaterials, dressRoom } from './visuals.js';
 
@@ -31,13 +31,14 @@ export class World {
     const q = QUALITY[qualityKey] || QUALITY.high;
     const s = this.scene;
 
-    s.background = new THREE.Color(0x101e28);
-    s.fog = new THREE.FogExp2(0x182a32, q.fogDensity);
+    s.background = new THREE.Color(0xaba99e);
+    s.fog = new THREE.FogExp2(0xaba99e, q.fogDensity);
     this.materials = roomMaterials();
 
     this._buildShell();
     this._buildWalls();
     this._buildProps();
+    this._buildFurniture();
     this._buildLights(q);
     this._buildSiteMarkers();
     this.dust = dressRoom(s, this.renderer);
@@ -52,12 +53,14 @@ export class World {
       this.materials.floor,
     );
     floor.rotation.x = -Math.PI / 2;
+    const floorUV = floor.geometry.attributes.uv;
+    for (let i=0;i<floorUV.count;i++) floorUV.setXY(i,floorUV.getX(i)*MAP.width/4,floorUV.getY(i)*MAP.depth/4);
     floor.receiveShadow = true;
     this.scene.add(floor);
 
     const ceil = new THREE.Mesh(
       new THREE.PlaneGeometry(MAP.width, MAP.depth),
-      new THREE.MeshStandardMaterial({ color: 0x34414a, roughness: .9 }),
+      new THREE.MeshStandardMaterial({ color: MAP.ceilColor, roughness: .9 }),
     );
     ceil.rotation.x = Math.PI / 2;
     ceil.position.y = MAP.height;
@@ -66,24 +69,33 @@ export class World {
 
   /* ---- 벽 --------------------------------------------------------------- */
   _buildWalls() {
-    const matWall = this.materials.wall;
-    // 벽은 전부 같은 머티리얼 + 박스라 인스턴싱으로 드로우콜을 1개로 줄인다.
-    const geo = new THREE.BoxGeometry(1, 1, 1);
-    const mesh = new THREE.InstancedMesh(geo, matWall, WALLS.length);
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    for (const w of WALLS) {
+      const geo = new THREE.BoxGeometry(w.w,w.h,w.d);
+      const uv=geo.attributes.uv,n=geo.attributes.normal;
+      for(let i=0;i<uv.count;i++){
+        const width=Math.abs(n.getX(i))>.5?w.d:w.w;
+        const height=Math.abs(n.getY(i))>.5?w.d:w.h;
+        uv.setXY(i,uv.getX(i)*width/3,uv.getY(i)*height/3);
+      }
+      const mesh=new THREE.Mesh(geo,this.materials.wall);
+      mesh.position.set(w.x,w.h/2,w.z);mesh.castShadow=mesh.receiveShadow=true;
+      this.scene.add(mesh);
+    }
+  }
 
-    const m = new THREE.Matrix4();
-    WALLS.forEach((w, i) => {
-      m.compose(
-        new THREE.Vector3(w.x, w.h / 2, w.z),
-        new THREE.Quaternion(),
-        new THREE.Vector3(w.w, w.h, w.d),
-      );
-      mesh.setMatrixAt(i, m);
-    });
-    mesh.instanceMatrix.needsUpdate = true;
-    this.scene.add(mesh);
+  _buildFurniture() {
+    const materials={
+      wood:new THREE.MeshStandardMaterial({color:0x523829,roughness:.55}),
+      velvet:new THREE.MeshStandardMaterial({color:0x284b43,roughness:.95}),
+      stone:new THREE.MeshStandardMaterial({color:0xddd4be,roughness:.58}),
+      brass:new THREE.MeshStandardMaterial({color:0xc3a46b,roughness:.3,metalness:.8}),
+    };
+    for(const f of FURNITURE) {
+      const mesh=new THREE.Mesh(new THREE.BoxGeometry(f.w,f.h,f.d),materials[f.material]);
+      mesh.position.set(f.x,(f.y||0)+f.h/2,f.z);mesh.rotation.y=f.ry||0;
+      mesh.castShadow=mesh.receiveShadow=true;mesh.userData.collider=f;
+      this.scene.add(mesh);
+    }
   }
 
   /* ---- 소품 (GLB, 없으면 placeholder) ----------------------------------- */
@@ -131,11 +143,11 @@ export class World {
       this.scene.add(bulb);
     }
     // One spotlight shadow replaces six large cube-shadow faces from a point light.
-    const key = new THREE.SpotLight(0xffdfb0, 85, 20, Math.PI * .45, .65, 2);
-    key.position.set(-2.8, 3.05, 1.9); key.target.position.set(0, 0, -.5);
+    const key = new THREE.SpotLight(0xffdfb0, 350, 45, Math.PI * .43, .65, 2);
+    key.position.set(0, 6.7, 4); key.target.position.set(0, 0, 0);
     key.castShadow = q.shadows; key.shadow.mapSize.set(q.shadowMapSize, q.shadowMapSize);
     key.shadow.bias = -.0005; key.shadow.normalBias = .025;
-    key.shadow.camera.near = .1; key.shadow.camera.far = 20;
+    key.shadow.camera.near = .1; key.shadow.camera.far = 45;
     key.layers.enable(1); this.scene.add(key, key.target); this.keyLight = key;
   }
 

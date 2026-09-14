@@ -8,7 +8,7 @@
 
 import * as THREE from 'three';
 import { PLAYER, COMBAT, VIEWMODEL } from './config.js';
-import { resolveCircle } from './map-data.js';
+import { moveBody, COLLIDERS, overlaps } from './map-data.js';
 
 export class LocalPlayer {
   constructor(camera, scene, assets, settings) {
@@ -100,7 +100,10 @@ export class LocalPlayer {
     if (!this.alive) { this._applyCamera(dt); return; }
 
     const wantSprint = input.sprint && input.move.y > 0.3 && !input.ads && !input.crouch;
-    this.crouching = input.crouch;
+    // Do not stand up into a table/shelf after entering a low opening.
+    this.crouching = !!input.crouch || (this.crouching && COLLIDERS.some(c =>
+      (c.y || 0) > this.pos.y && (c.y || 0) < this.pos.y + PLAYER.height &&
+      overlaps(this.pos.x, this.pos.z, PLAYER.radius, c)));
     this.sprinting = wantSprint;
 
     // 목표 속도 (yaw 기준 전/후/좌/우)
@@ -132,20 +135,13 @@ export class LocalPlayer {
       this.vel.y = PLAYER.jumpSpeed;
       this.onGround = false;
     }
-    this.vel.y += PLAYER.gravity * dt;
-
-    // 위치 적분 + 충돌 (서버와 같은 함수)
-    const nx = this.pos.x + this.vel.x * dt;
-    const nz = this.pos.z + this.vel.z * dt;
-    const fixed = resolveCircle(nx, nz, PLAYER.radius);
-    // 벽에 막혔으면 그 방향 속도를 죽인다 (벽을 타고 미끄러지게)
-    if (Math.abs(fixed.x - nx) > 1e-4) this.vel.x = 0;
-    if (Math.abs(fixed.z - nz) > 1e-4) this.vel.z = 0;
-    this.pos.x = fixed.x;
-    this.pos.z = fixed.z;
-
-    this.pos.y += this.vel.y * dt;
-    if (this.pos.y <= 0) { this.pos.y = 0; this.vel.y = 0; this.onGround = true; }
+    const body = moveBody(this.pos, this.vel, Math.min(dt, .1), {
+      radius: PLAYER.radius, height: this.crouching ? 1.3 : PLAYER.height,
+      grounded: this.onGround, gravity: PLAYER.gravity,
+    });
+    this.pos.set(body.pos.x, body.pos.y, body.pos.z);
+    this.vel.set(body.vel.x, body.vel.y, body.vel.z);
+    this.onGround = body.onGround;
 
     // 조준 상태 보간
     const adsTarget = input.ads ? 1 : 0;

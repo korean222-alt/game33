@@ -18,7 +18,7 @@ import { Server } from 'socket.io';
 
 import {
   MAP, COLLIDERS, SPAWNS, BOMB_SITES, BOT_SPAWNS, PATROL_NODES,
-  resolveCircle, hasLineOfSight, rayObstacleDistance, segmentHitsBox,
+  resolveCircle, hasLineOfSight, rayObstacleDistance, segmentHitsBox, findRoute,
 } from './public/js/map-data.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -30,7 +30,7 @@ const PORT = process.env.PORT || 3000;
 const TICK_HZ          = 20;          // 서버 시뮬레이션 / 스냅샷 주기
 const TICK_MS          = 1000 / TICK_HZ;
 
-const PLAYER_RADIUS    = 0.35;
+const PLAYER_RADIUS    = 0.32;
 const PLAYER_MAX_HP    = 100;
 const PLAYER_EYE       = 1.62;
 
@@ -189,7 +189,10 @@ function botCanSee(bot, p) {
   const fwdX = -Math.sin(bot.yaw), fwdZ = -Math.cos(bot.yaw);
   const dot = (toX * fwdX + toZ * fwdZ) / (d || 1);
   if (dot < Math.cos(BOT_FOV / 2) && d > 2.5) return false; // 2.5m 이내는 뒤통수도 인지
-  return hasLineOfSight(bot.x, bot.z, p.x, p.z, 1.35);
+  const aim={x:p.x-bot.x,y:(p.y||0)+(p.crouch?1.05:1.42)-BOT_EYE,z:p.z-bot.z};
+  const length=Math.hypot(aim.x,aim.y,aim.z)||1;
+  return rayObstacleDistance({x:bot.x,y:BOT_EYE,z:bot.z},
+    {x:aim.x/length,y:aim.y/length,z:aim.z/length},length)>=length-.02;
 }
 
 function botFindTarget(room, bot) {
@@ -204,6 +207,13 @@ function botFindTarget(room, bot) {
 
 /** 봇 이동: 목표 지점 쪽으로 걷고 충돌 처리 */
 function botMoveToward(bot, tx, tz, speed, dt) {
+  const targetKey = Math.round(tx) + ':' + Math.round(tz);
+  if (bot.routeKey !== targetKey || !bot.route || now() > bot.routeUntil) {
+    bot.route = findRoute(bot, { x: tx, z: tz });
+    bot.routeKey = targetKey; bot.routeUntil = now() + 2500;
+  }
+  while (bot.route?.length && Math.hypot(bot.route[0].x-bot.x,bot.route[0].z-bot.z)<.2) bot.route.shift();
+  if (bot.route?.length) { tx=bot.route[0].x;tz=bot.route[0].z; }
   const dx = tx - bot.x, dz = tz - bot.z;
   const d = Math.hypot(dx, dz);
   if (d < 0.05) { bot.moving = 0; return true; }
@@ -225,7 +235,7 @@ function botMoveToward(bot, tx, tz, speed, dt) {
     bot.x = fixed.x; bot.z = fixed.z;
   }
   bot.moving = 1;
-  return d < 0.6;
+  return d < 0.6 && !bot.route?.length;
 }
 
 function botFaceToward(bot, tx, tz, dt) {
@@ -313,7 +323,7 @@ function updateBots(room, dt, io) {
           const hit = Math.random() < chance;
           io.to(room.code).emit('botShot', {
             id: bot.id, x: bot.x, y: BOT_EYE, z: bot.z,
-            tx: target.x, ty: PLAYER_EYE - 0.2, tz: target.z, hit,
+            tx: target.x, ty: (target.y||0)+(target.crouch?1.05:PLAYER_EYE-0.2), tz: target.z, hit,
           });
 
           if (hit) {
@@ -651,10 +661,11 @@ io.on('connection', (socket) => {
     if (!me || !room || room.state !== 'active' || !me.alive) return;
     if (!d || !['x', 'y', 'z', 'yaw', 'pitch'].every(k => Number.isFinite(d[k]))) return;
     // 위치는 클라 예측을 신뢰하되 서버에서 한 번 더 충돌 보정 (벽 뚫기 방지)
-    const fixed = resolveCircle(+d.x || 0, +d.z || 0, PLAYER_RADIUS, COLLIDERS);
+    const height = d.crouch ? 1.3 : 1.8;
+    me.y = clamp(d.y, 0, MAP.height - height);
+    const fixed = resolveCircle(d.x, d.z, PLAYER_RADIUS, COLLIDERS, me.y, height);
     me.x = fixed.x;
     me.z = fixed.z;
-    me.y = clamp(+d.y || 0, 0, 3);
     me.yaw = +d.yaw || 0;
     me.pitch = clamp(+d.pitch || 0, -1.5, 1.5);
     me.moving = d.moving ? 1 : 0;

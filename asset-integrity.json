@@ -1,0 +1,62 @@
+{
+  "public/assets/models/stall-tarp.glb": {
+    "bytes": 13904,
+    "sha256": "43dea18fdb9c41ecad1e768c5d32ef070fe52f459e3faba8329ece6627924eea"
+  },
+  "public/assets/models/stall-wood.glb": {
+    "bytes": 4764964,
+    "sha256": "584f8bb9da0070ac467a31487380d33ad98d1ecea3826214f2c0ac86d716a4d4"
+  },
+  "public/assets/models/crate.glb": {
+    "bytes": 9980,
+    "sha256": "5f765509f0bf9db466f64add750ecfd78f6a1d9b65073d76ac3df94fde29ce24"
+  },
+  "public/assets/models/barrel.glb": {
+    "bytes": 579780,
+    "sha256": "22e4a18c5c8227ed44a7bc14850326daaeb437fa89bc9963091d24d63428a4ca"
+  },
+  "public/assets/models/vase.glb": {
+    "bytes": 11140,
+    "sha256": "85e1fd2b533fc10de57a2c49b2e8916c88ea1f4518cecd33f9fa48f68da26589"
+  },
+  "public/assets/models/well.glb": {
+    "bytes": 435860,
+    "sha256": "0a0ec9793a08f5f4973d5abe2bd19cc50c764de7dcb685609a9ce8a523abd881"
+  },
+  "public/assets/models/character.glb": {
+    "bytes": 70928,
+    "sha256": "12d23cb417896492bf1a5a8f80c93f66ee920868a6fce890790fcb7ba92f8d86"
+  },
+  "public/assets/models/weapon-rifle.glb": {
+    "bytes": 180320,
+    "sha256": "b7d3f11459942c1749c8f542267b060d4703a1598814fdc408459ec7bf0e9c95"
+  },
+  "public/assets/models/weapon-smg.glb": {
+    "bytes": 105272,
+    "sha256": "c7715a7a4e84ff0c76d9a276dc0f0b2937a2e9ff5942bd91132c6b038158e78b"
+  },
+  "public/assets/models/weapon-sniper.glb": {
+    "bytes": 121444,
+    "sha256": "e74e546f081d23aee7cdd7ee8e151a10380e4652a77a67a15ffeccd9df585cc6"
+  },
+  "public/assets/textures/concrete-color.jpg": {
+    "bytes": 1958881,
+    "sha256": "3d6b57e753b9391fb8e0f1a601223a0d654a44678779fecd004a04fc3d0ed4b0"
+  },
+  "public/assets/textures/concrete-normal.jpg": {
+    "bytes": 588956,
+    "sha256": "5e5be90efae08aa3a6d866cb737d7802671fa1e9b11e5ec379da798dc5f57ecb"
+  },
+  "public/assets/textures/concrete-rough.jpg": {
+    "bytes": 146479,
+    "sha256": "338da0a28dd4a496a83157720d8db7ab2a81b46478d23934552a0f36d890bf38"
+  },
+  "public/assets/textures/brick-color.jpg": {
+    "bytes": 758784,
+    "sha256": "15faaeaf6aaac86e46dafd4d9cc93f894d4ce5c3c26239ac2577d1f5b6901c62"
+  },
+  "public/assets/textures/brick-normal.jpg": {
+    "bytes": 638142,
+    "sha256": "f26fcec8bbb40eb8dc2ea9f4c87ea4ebe5f53e490cbda966c97eb7cfb1d242a6"
+  }
+}
