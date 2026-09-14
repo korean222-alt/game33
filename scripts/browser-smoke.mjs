@@ -185,9 +185,22 @@ try {
     }
   };
 
+  // 문틈으로 보기: 열쇠구멍 시점이 켜지고, 문짝이 잠깐 감춰지고, 인기척이 보고된다.
   await page.keyboard.down('KeyQ');
-  await untilDoor(() => document.getElementById('banner').textContent.includes('문틈 확인:'));
+  await untilDoor(() => !!window.__mr.peek && document.getElementById('peek').classList.contains('on'));
+  await untilDoor(() => document.getElementById('killfeed').textContent.includes('인기척:'));
+  const peeking = await page.evaluate((id) => ({
+    leaf: window.__mr.world.doorMeshes.get(id).pivot.visible,
+    frozen: window.__mr.player.frozen,
+    fov: Math.round(window.__mr.camera.fov),
+  }), target);
+  assert.equal(peeking.leaf, false, '문틈으로 볼 때는 문짝이 눈앞을 가리면 안 된다');
+  assert.equal(peeking.frozen, true, '문틈을 보는 동안에는 움직일 수 없어야 한다');
+  assert.ok(peeking.fov < 40, `문틈 시야가 좁아지지 않았다: ${peeking.fov}`);
   await page.keyboard.up('KeyQ');
+  await untilDoor(() => !window.__mr.peek && !window.__mr.player.frozen);
+  assert.equal(await page.evaluate((id) => window.__mr.world.doorMeshes.get(id).pivot.visible, target),
+    true, '문틈에서 눈을 떼면 문짝이 돌아와야 한다');
   await untilDoor(() => !window.__mr._doorPending && performance.now() >= window.__mr._doorBusyUntil);
   const state = await page.evaluate((id) => window.__mr.doors.get(id).state, target);
   if (state === 'barricaded') await page.keyboard.press('KeyB');
@@ -226,7 +239,7 @@ try {
   assert.equal(await page.evaluate(() => window.__mr.matchActive), false);
   assert.ok(await page.locator('#menuErr').textContent());
   assert.deepEqual(errors, []);
-  console.log('Browser smoke passed: exterior spawn, animated NPC bounds, Q/E/B doors, shot/reload audio, incompatible server rejection.');
+  console.log('Browser smoke passed: exterior spawn, animated NPC bounds, keyhole peek, Q/E/B doors, shot/reload audio, incompatible server rejection.');
 } catch (error) {
   console.error('Stage:', stage, 'browser errors:', errors);
   if (page && !page.isClosed()) console.error('Game state:', await page.evaluate(() => {

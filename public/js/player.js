@@ -27,6 +27,7 @@ export class LocalPlayer {
     this.settings = settings;
     this.colliders = colliders;
     this.holdingUse = false;
+    this.frozen = false;      // 문틈 확인 중에는 이동을 멈춘다
 
     this.pos = new THREE.Vector3(0, 0, 4.6);
     this.vel = new THREE.Vector3();
@@ -117,7 +118,10 @@ export class LocalPlayer {
 
     const colliders = this.colliders();
     this.holdingUse = !!input.use;
-    const wantSprint = input.sprint && input.move.y > 0.3 && !input.ads && !input.crouch;
+    // 문틈에 눈을 대고 있는 동안에는 제자리에 선다. 입력은 그대로 두고
+    // 여기서만 무시하므로, 손을 떼면 키를 다시 누르지 않아도 바로 움직인다.
+    const move = this.frozen ? FROZEN_MOVE : input.move;
+    const wantSprint = !this.frozen && input.sprint && move.y > 0.3 && !input.ads && !input.crouch;
     // 낮은 틈으로 들어간 뒤 테이블/선반 안에서 일어서지 않게 한다.
     this.crouching = !!input.crouch || (this.crouching && colliders.some(c =>
       (c.y || 0) > this.pos.y && (c.y || 0) < this.pos.y + PLAYER.height &&
@@ -134,8 +138,8 @@ export class LocalPlayer {
     const fwdX = -Math.sin(this.yaw), fwdZ = -Math.cos(this.yaw);
     const rgtX = Math.cos(this.yaw),  rgtZ = -Math.sin(this.yaw);
 
-    const wishX = fwdX * input.move.y + rgtX * input.move.x;
-    const wishZ = fwdZ * input.move.y + rgtZ * input.move.x;
+    const wishX = fwdX * move.y + rgtX * move.x;
+    const wishZ = fwdZ * move.y + rgtZ * move.x;
     const wishLen = Math.hypot(wishX, wishZ);
     const targetX = wishX / Math.max(1, wishLen) * speed;
     const targetZ = wishZ / Math.max(1, wishLen) * speed;
@@ -149,7 +153,7 @@ export class LocalPlayer {
     this.moving = Math.hypot(this.vel.x, this.vel.z) > 0.35;
 
     // 점프 / 중력
-    if (input.consumeJump() && this.onGround && !this.crouching) {
+    if (input.consumeJump() && this.onGround && !this.crouching && !this.frozen) {
       this.vel.y = PLAYER.jumpSpeed;
       this.onGround = false;
     }
@@ -335,3 +339,5 @@ export class LocalPlayer {
 }
 
 const lerp = (a, b, k) => a + (b - a) * k;
+/** 문틈을 보는 동안 쓰는 "입력 없음". 입력 객체를 건드리지 않기 위해 따로 둔다. */
+const FROZEN_MOVE = Object.freeze({ x: 0, y: 0 });

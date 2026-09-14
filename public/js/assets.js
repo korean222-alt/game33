@@ -13,6 +13,9 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { MODELS } from './config.js';
 
+/** 넣어 둔 역할별 캐릭터 모델 목록. 없으면 전부 기본 캐릭터를 쓴다. */
+const ROLE_MANIFEST = '/assets/models/roles.json';
+
 export class AssetManager {
   constructor(renderer) {
     this.loader = new GLTFLoader();
@@ -25,8 +28,15 @@ export class AssetManager {
 
   setAnisotropy(v) { this.anisotropy = Math.min(v, this.maxAnisotropy); }
 
-  /** 전체 모델을 병렬로 불러온다. onProgress(loaded, total, key) */
-  async loadAll(keys = Object.keys(MODELS), onProgress = null) {
+  /**
+   * 전체 모델을 병렬로 불러온다. onProgress(loaded, total, key)
+   *
+   * 선택 모델(역할별 캐릭터)은 목록 파일에 적힌 것만 불러온다. 없는 파일을
+   * 일단 요청해 보면 브라우저 콘솔이 404 로 더러워지고, 느린 연결에서는
+   * 로딩이 그만큼 늦어진다.
+   */
+  async loadAll(keys = null, onProgress = null) {
+    if (!keys) keys = await this._availableKeys();
     let done = 0;
     const total = keys.length;
     await Promise.all(keys.map(async (key) => {
@@ -41,6 +51,23 @@ export class AssetManager {
       );
     }
     return this.cache;
+  }
+
+  /** 실제로 불러올 모델 키 목록 (넣지 않은 역할별 모델은 뺀다). */
+  async _availableKeys() {
+    const optional = Object.keys(MODELS).filter((key) => MODELS[key].optional);
+    if (!optional.length) return Object.keys(MODELS);
+    let present = [];
+    try {
+      const response = await fetch(ROLE_MANIFEST, { cache: 'no-cache' });
+      if (response.ok) present = (await response.json()).present || [];
+    } catch { /* 목록이 없으면 역할별 모델을 쓰지 않는다 */ }
+    // 목록에 없는 선택 모델은 기본 캐릭터로 바로 연결해 둔다.
+    for (const key of optional) {
+      if (present.includes(key)) continue;
+      this.cache.set(key, { fallback: MODELS[key].fallback || 'character', animations: [], isPlaceholder: false });
+    }
+    return Object.keys(MODELS).filter((key) => !MODELS[key].optional || present.includes(key));
   }
 
   async load(key) {
@@ -75,6 +102,12 @@ export class AssetManager {
       this._prepare(root);
       entry = { scene: root, animations: gltf.animations || [], isPlaceholder: false };
     } catch (err) {
+      // 선택 모델(역할별 캐릭터 등)은 없는 것이 정상이다. 기본 모델로 넘긴다.
+      if (def.optional) {
+        const entry = { fallback: def.fallback || null, animations: [], isPlaceholder: false };
+        this.cache.set(key, entry);
+        return entry;
+      }
       this.missing.push(key);
       console.error(`[assets] ${key}: ${def.url}`, err);
       const root = makePlaceholder(def.placeholder || { type: 'box', w: 1, h: 1, d: 1, color: 0x888888 });
@@ -117,9 +150,24 @@ export class AssetManager {
    * 인스턴스 하나 만들기.
    * 스킨(뼈대)이 있으면 SkeletonUtils.clone 으로 복제해야 각자 따로 움직인다.
    */
-  instance(key, { skinned = false, materials = false } = {}) {
+  /**
+   * 실제로 그릴 모델 키. 선택 모델이 없으면 기본 모델로 내려간다.
+   * (인질 모델만 넣었을 때 대원·용의자는 기존 모델을 그대로 쓰게 하는 장치)
+   */
+  resolve(key, depth = 0) {
     const entry = this.cache.get(key);
-    if (!entry) throw new Error(`[assets] ${key} 가 아직 로드되지 않음`);
+    if (!entry?.fallback || depth > 4) return key;
+    return this.resolve(entry.fallback, depth + 1);
+  }
+
+  /** 이 키가 자기 모델 파일을 갖고 있는가 (기본 모델로 내려가지 않았는가). */
+  hasOwnModel(key) {
+    return this.resolve(key) === key && !this.isPlaceholder(key);
+  }
+
+  instance(key, { skinned = false, materials = false } = {}) {
+    const entry = this.cache.get(this.resolve(key));
+    if (!entry?.scene) throw new Error(`[assets] ${key} 가 아직 로드되지 않음`);
     const obj = skinned ? skeletonClone(entry.scene) : entry.scene.clone(true);
     if (materials) obj.traverse(o => {
       if (!o.isMesh) return;
@@ -130,12 +178,16 @@ export class AssetManager {
   }
 
   isPlaceholder(key) {
-    return this.cache.get(key)?.isPlaceholder ?? true;
+    return this.cache.get(this.resolve(key))?.isPlaceholder ?? true;
   }
 
   /** GLB 에 들어 있는 애니메이션 클립 목록 (없으면 빈 배열). */
   animations(key) {
-    return this.cache.get(key)?.animations ?? [];
+    const entry = this.cache.get(key);
+    // 역할별 모델에는 동작이 없을 수 있다. 그때는 기본 캐릭터의 동작을 쓴다.
+    if (entry?.animations?.length) return entry.animations;
+    const base = this.cache.get(this.resolve(key));
+    return base?.animations ?? [];
   }
 }
 

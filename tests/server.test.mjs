@@ -148,11 +148,35 @@ test('two clients: readiness gate, shot validation, doors, 장비, 단계, room 
   assert.equal(unchanged.inputSeq, 2);
   assert.equal(unchanged.z, 24);
 
+  /* ---- 미션표가 실시간으로 갱신된다 ----
+   * 예전에는 단계가 통째로 끝날 때만 목표 목록을 보냈다. 그래서 외곽 경비를
+   * 다 잡아도 화면의 숫자가 그대로였다. 저택 안에 발을 들이면 '내부 진입'이
+   * 곧바로 체크되어야 한다. */
+  const breached = waitFor(host, 'objectives',
+    (r) => r.list.some((o) => o.id === 'breach' && o.done), 8000);
+  host.emit('input', { seq: 3, x: 0, y: 0, z: 14, yaw: 0, pitch: 0 });
+  const report = await breached;
+  assert.equal(report.id, 'approach');
+  const perimeter = report.list.find((o) => o.id === 'perimeter');
+  assert.equal(typeof perimeter.have, 'number');
+  assert.equal(typeof perimeter.need, 'number');
+  // 증거 목표는 무엇이 어느 방에 남았는지까지 알려 준다.
+  const evidence = report.list.find((o) => o.id === 'evidence');
+  assert.ok(evidence.detail?.length > 0, '증거의 위치를 알려 준다');
+
+  /* ---- 구두 경고: 외친 본인에게 결과가 돌아온다 ---- */
+  const shoutBack = waitFor(host, 'shoutResult', () => true, 4000);
+  host.emit('shout');
+  const tally = await shoutBack;
+  for (const key of ['heard', 'aimed', 'surrender', 'defy', 'shaken', 'civilians']) {
+    assert.equal(typeof tally[key], 'number', `경고 결과에 ${key} 가 있어야 한다`);
+  }
+
   /* ---- 문 ---- */
   const front = DOORWAYS.find((d) => d.id === 'front');
   assert.equal((await request(host, 'door', { id: 'front', action: 'open' })).error, 'far');
-  host.emit('input', { seq: 3, x: front.x, y: 0, z: front.z + 1.2, yaw: 0, pitch: 0 });
-  await waitFor(host, 'snapshot', (s) => s.players.find((p) => p.id === host.id).inputSeq === 3);
+  host.emit('input', { seq: 4, x: front.x, y: 0, z: front.z + 1.2, yaw: 0, pitch: 0 });
+  await waitFor(host, 'snapshot', (s) => s.players.find((p) => p.id === host.id).inputSeq === 4);
   const peek = await request(host, 'door', { id: 'front', action: 'peek' });
   assert.equal(peek.ok, true);
   assert.ok(['none', 'one', 'several'].includes(peek.contacts));
@@ -177,7 +201,7 @@ test('two clients: readiness gate, shot validation, doors, 장비, 단계, room 
   await delay(750);
   assert.equal((await request(host, 'throw', { type: 'flash', dx: 0, dy: .2, dz: -1 })).ok, false);
 
-  host.emit('shout');   // 예외 없이 처리된다
+
 
   /* ---- 방 정리와 브리핑 취소 ---- */
   const second = await request(host, 'createRoom', { name: '검증1', weapon: 'rifle' });

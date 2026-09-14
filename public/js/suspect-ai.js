@@ -64,6 +64,8 @@ export function createSuspect(id, { post, personality, hp = 100, kind = 'suspect
     ammo: MAG, reloadUntil: 0, nextFire: 0, burst: BURST, spotTime: 0,
     hostage, weaponDropped: false, arrested: false, hands: 0,
     doorUntil: 0, shoutedAt: 0,
+    // 구두 경고로 쌓이는 압박. 시간이 지나면 풀린다.
+    pressure: 0, warnedAt: 0, defiantUntil: 0,
   };
 }
 
@@ -190,6 +192,7 @@ export function updateMorale(npc, w) {
     - wounded * 0.85
     - w.alliesDown * 0.16
     - npc.suppression * 0.3
+    - (npc.pressure || 0) * 0.45
     - npc.gas * 0.35
     - (w.now < npc.blindUntil ? 0.3 : 0);
   if (npc.hostage) target += 0.3;
@@ -206,6 +209,80 @@ export function shouldSurrender(npc, w, visible) {
   // 눈앞에 총구가 있고 사기가 바닥이면 손을 든다. 아니면 일단 도망친다.
   const pressured = visible && dist2(npc, visible) < 14;
   return pressured && w.random() < npc.traits.surrender;
+}
+
+/* ========================================================================== *
+ *  구두 경고
+ *
+ *  "손 들어" 하고 외치면 무조건 항복하는 게임은 긴장이 없고, 아무 반응도
+ *  없으면 버튼이 고장 난 것처럼 보인다. 그래서 확률로 갈린다.
+ *
+ *    총구를 겨눈 채로 가까이에서 외칠수록  -> 항복할 확률이 오른다
+ *    사기가 남아 있고 공격 성향이면        -> 오히려 달려든다
+ *    인질을 잡고 있으면                    -> 통하지 않는다
+ * ========================================================================== */
+export const WARNING = {
+  range: 12,                 // 목소리가 압박이 되는 거리(m)
+  aimAngle: Math.PI / 7,     // 총구를 겨눴다고 볼 각도(±약 26도)
+  cooldown: 2200,            // 같은 사람에게 다시 통하기까지(ms)
+  pressureDecay: 0.14,       // 초당 압박 감소량
+};
+
+/**
+ * 지금 이 사람이 항복할 확률.
+ * 순수 함수라 테스트에서 상황별로 값을 바로 확인할 수 있다.
+ */
+export function surrenderChance(npc, { aimed = false, distance = 6, alliesDown = 0 } = {}) {
+  if (!npc.alive || npc.hostage || npc.state === 'surrender' || npc.arrested) return 0;
+  const traits = npc.traits || PERSONALITIES.defensive;
+  // 총구를 겨누지 않고 소리만 지르면 효과가 크게 떨어진다.
+  let chance = traits.surrender * (aimed ? 1 : 0.3);
+  chance *= clamp(1.3 - (npc.morale ?? 1), 0.12, 1.3);
+  chance += (1 - npc.hp / npc.maxHp) * 0.35;           // 이미 다쳤으면 포기하기 쉽다
+  chance += Math.min(0.22, alliesDown * 0.075);        // 동료가 쓰러지는 것을 봤다
+  chance += Math.min(0.28, (npc.pressure || 0) * 0.28); // 계속 소리치면 눌린다
+  chance -= Math.max(0, (distance - 6) * 0.045);       // 멀리서 외치면 덜 무섭다
+  if (npc.kind === 'hvt') chance *= 0.45;              // 주범은 쉽게 꺾이지 않는다
+  return clamp(chance, 0, 0.95);
+}
+
+/**
+ * 경고 한 번의 결과.
+ * @returns 'surrender' 항복 | 'defy' 반항(덤벼든다) | 'shaken' 흔들림 | 'ignored'
+ */
+export function warnSuspect(npc, w, { aimed = false, distance = 6, alliesDown = 0, from = null } = {}) {
+  if (!npc.alive || npc.arrested || npc.state === 'surrender') return 'ignored';
+  if (w.now - (npc.warnedAt || 0) < WARNING.cooldown) return 'ignored';
+  npc.warnedAt = w.now;
+  npc.pressure = clamp((npc.pressure || 0) + (aimed ? 0.45 : 0.2), 0, 1);
+  npc.suppression = clamp((npc.suppression || 0) + (aimed ? 0.25 : 0.1), 0, 1);
+
+  if (npc.hostage) return 'defy';     // 인질을 방패로 삼은 자는 응하지 않는다
+
+  if (w.random() < surrenderChance(npc, { aimed, distance, alliesDown })) {
+    setState(npc, 'surrender', w);
+    npc.hands = 1; npc.crouch = 1; npc.weaponDropped = true; npc.moving = 0;
+    w.onSurrender?.(npc);
+    return 'surrender';
+  }
+
+  // 말을 안 듣는 쪽. 사기가 남아 있고 공격적일수록 오히려 달려든다.
+  const defiance = clamp((1 - npc.traits.surrender) * 0.6 + npc.traits.push * 0.35, 0, 0.9)
+    * clamp(npc.morale ?? 1, 0.2, 1.2);
+  if (w.random() < defiance) {
+    npc.defiantUntil = w.now + 5000;
+    if (from) {
+      npc.lastHeard = { x: from.x, z: from.z, t: w.now, level: 1, type: 'shout', by: from.id };
+      npc.lastSeen = { x: from.x, z: from.z, t: w.now };
+      npc.targetId = from.id ?? npc.targetId;
+    }
+    if (npc.state !== 'engage') setState(npc, 'engage', w);
+    npc.spotTime = w.now;
+    npc.burst = BURST;
+    w.onDefy?.(npc);
+    return 'defy';
+  }
+  return 'shaken';
 }
 
 /* ========================================================================== *
@@ -247,6 +324,7 @@ function setState(npc, state, w, holdMs = 0) {
 export function updateSuspect(npc, w) {
   if (!npc.alive) { npc.moving = 0; return; }
   npc.suppression = Math.max(0, npc.suppression - w.dt * 0.45);
+  npc.pressure = Math.max(0, (npc.pressure || 0) - w.dt * WARNING.pressureDecay);
   npc.gas = Math.max(0, npc.gas - w.dt * 0.25);
   if (npc.reloadUntil && w.now >= npc.reloadUntil) { npc.reloadUntil = 0; npc.ammo = MAG; }
 

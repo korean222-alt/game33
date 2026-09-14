@@ -22,7 +22,7 @@ import { Server } from 'socket.io';
 import {
   MAP, COLLIDERS, SPAWNS, BOMB_SITES, POSTS, CIVILIAN_SPOTS, EVIDENCE_SPOTS,
   HVT_ROOMS, EXTRACTION, LIGHTS, COVER_POINTS, ROOMS,
-  resolveCircle, rayObstacleDistance, findRoute, isIndoors,
+  resolveCircle, rayObstacleDistance, findRoute, isIndoors, zoneAt,
 } from './public/js/map-data.js';
 import {
   DOOR, DoorSet, rollDoorStates, ensureQuietEntry, DOOR_ACTIONS, DOOR_REACH, isBlocking,
@@ -31,10 +31,10 @@ import {
 import { NOISE, brightnessAt, hasClearShot, inFieldOfView } from './public/js/perception.js';
 import {
   createSuspect, createCivilian, updateSuspect, updateCivilian, deliverNoise,
-  planOccupancy, SUSPECT_EYE,
+  planOccupancy, warnSuspect, WARNING, SUSPECT_EYE, SUSPECT_RADIUS,
 } from './public/js/suspect-ai.js';
 import {
-  GRENADES, GRENADE_ORDER, createGrenade, stepGrenade, flashStrength, fragDamage,
+  GRENADES, GRENADE_ORDER, createGrenade, stepGrenade, flashStrength, flashSeconds, fragDamage,
   gasIntensity, startingGrenades,
 } from './public/js/grenades.js';
 import { traceShot, TargetHistory } from './public/js/shot-trace.js';
@@ -67,8 +67,7 @@ const SECURE_SECONDS = 1.6;
 const REVIVE_SECONDS = 4.0;
 const EVIDENCE_SECONDS = 1.4;
 const BLEED_OUT_MS = 75000;
-const SHOUT_RANGE = 9;
-const SHOUT_COOLDOWN = 2600;
+const SHOUT_COOLDOWN = 1600;
 const REINFORCE_DELAY_MS = 14000;
 const REINFORCE_COUNT = 3;
 
@@ -92,6 +91,27 @@ const OUTDOOR_ZONES = ['COURTYARD', 'WEST YARD', 'EAST YARD', 'GARDEN'];
 const now = () => Date.now();
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const dist2D = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+/** 소리를 낼 위치. 클라이언트가 그 자리에서 들리게 하려면 좌표가 필요하다. */
+const at3 = (o) => ({ x: +o.x.toFixed(2), y: +(o.y || 0).toFixed(2), z: +o.z.toFixed(2) });
+const pick = (list, random = Math.random) => list[Math.floor(random() * list.length)];
+
+/**
+ * 정해진 자리에서 조금 흩어 놓는다.
+ *
+ * 자리 목록이 고정이면 두 번째 판부터는 "저 방 저 구석" 을 외워서 문을 열자마자
+ * 그쪽을 쏘게 된다. 벽에 끼지 않는 선에서 흔들어 매 판 다르게 만든다.
+ */
+function jitter(spot, random, spread = 1.1, radius = 0.42) {
+  const angle = random() * Math.PI * 2;
+  const reach = Math.sqrt(random()) * spread;
+  const x = spot.x + Math.cos(angle) * reach;
+  const z = spot.z + Math.sin(angle) * reach;
+  const fixed = resolveCircle(x, z, radius, COLLIDERS, 0, 1.7);
+  // 벽에 밀려났으면 원래 자리가 안전하다.
+  if (Math.hypot(fixed.x - x, fixed.z - z) > 0.02) return { ...spot };
+  if (zoneAt(fixed.x, fixed.z) !== (spot.room || zoneAt(spot.x, spot.z))) return { ...spot };
+  return { ...spot, x: +fixed.x.toFixed(2), z: +fixed.z.toFixed(2) };
+}
 
 function makeRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'; // 헷갈리는 글자(I,O,0,1) 제외
@@ -138,6 +158,7 @@ class Room {
       objectivesMissed: 0, completed: false,
     };
     this.targetHistory = new TargetHistory();
+    this.objectiveSignature = '';
     this.endsAt = 0;
     this.nextGrenadeId = 1;
     this.phaseEnteredAt = 0;
@@ -226,8 +247,10 @@ function setupMission(room) {
   const usablePosts = POSTS.filter((post) => !watchesSpawn(post));
   const plan = planOccupancy(usablePosts, room.botCount, random);
   plan.forEach((entry, i) => {
+    const post = jitter(entry.post, random, 1.3, SUSPECT_RADIUS);
+    post.yaw = (entry.post.yaw ?? 0) + (random() - 0.5) * 1.2;
     const suspect = createSuspect(`sus_${i}`, {
-      post: entry.post,
+      post,
       personality: entry.personality,
       hp: Math.round(SUSPECT_MAX_HP * diff.hpMul),
     });
@@ -239,8 +262,13 @@ function setupMission(room) {
   });
 
   // --- 주요 용의자와 인질 ---
-  const hvtRoom = HVT_ROOMS[Math.floor(random() * HVT_ROOMS.length)];
-  const hvtPost = POSTS.filter((p) => p.room === hvtRoom)[0] || POSTS[0];
+  // 방도, 그 방 안의 자리도 매 판 다시 뽑는다. 인질이 어디에 있는지는
+  // 문을 열어 보기 전에는 알 수 없어야 한다.
+  const hvtRoom = pick(HVT_ROOMS, random);
+  const hvtPosts = POSTS.filter((p) => p.room === hvtRoom);
+  const basePost = hvtPosts.length ? pick(hvtPosts, random) : POSTS[0];
+  const hvtPost = jitter(basePost, random, 1.4, SUSPECT_RADIUS);
+  hvtPost.yaw = (basePost.yaw ?? 0) + (random() - 0.5) * 1.6;
   const hvt = createSuspect('hvt', {
     post: hvtPost, personality: 'leader', kind: 'hvt',
     hp: Math.round(140 * diff.hpMul),
@@ -250,8 +278,12 @@ function setupMission(room) {
   room.npcs.push(hvt);
   room.hvtRoom = hvtRoom;
 
-  const hostageSpot = CIVILIAN_SPOTS.find((s) => s.room === hvtRoom)
-    || { room: hvtRoom, x: hvtPost.x, z: hvtPost.z };
+  // 인질은 주범과 같은 방의 다른 자리. 그 방에 정해진 자리가 없으면 주범 옆.
+  const roomSpots = CIVILIAN_SPOTS.filter((s) => s.room === hvtRoom);
+  const hostageBase = roomSpots.length
+    ? pick(roomSpots, random)
+    : { room: hvtRoom, x: hvtPost.x + (random() - 0.5) * 2, z: hvtPost.z + (random() - 0.5) * 2 };
+  const hostageSpot = jitter(hostageBase, random, 0.9);
   const hostage = createCivilian('hostage', hostageSpot);
   hostage.hostage = true;
   hostage.state = 'comply';
@@ -260,16 +292,24 @@ function setupMission(room) {
   room.npcs.push(hostage);
 
   // --- 나머지 민간인 ---
-  const spots = CIVILIAN_SPOTS.filter((s) => s !== hostageSpot).sort(() => random() - 0.5);
-  const civilianCount = 2 + Math.floor(random() * 2);
-  for (let i = 0; i < civilianCount && i < spots.length; i++) {
-    room.npcs.push(createCivilian(`civ_${i}`, spots[i]));
+  // 주범의 방은 비워 둔다. 인질 옆에 다른 민간인이 서 있으면 누구를 구해야
+  // 하는지 헷갈린다.
+  const spots = CIVILIAN_SPOTS
+    .filter((s) => s !== hostageBase && s.room !== hvtRoom)
+    .sort(() => random() - 0.5);
+  const civilianCount = 2 + Math.floor(random() * 3);
+  const usedRooms = new Set();
+  for (const spot of spots) {
+    if (room.npcs.filter((n) => n.kind === 'civilian' && n.id !== 'hostage').length >= civilianCount) break;
+    if (usedRooms.has(spot.room)) continue;    // 한 방에 한 명씩 흩어 놓는다
+    usedRooms.add(spot.room);
+    room.npcs.push(createCivilian(`civ_${usedRooms.size - 1}`, jitter(spot, random, 1.0)));
   }
 
   // --- 장치와 증거 ---
   room.sites = BOMB_SITES.map((s) => ({ ...s, progress: 0, defused: false, activeBy: [] }));
   room.evidence = [...EVIDENCE_SPOTS].sort(() => random() - 0.5).slice(0, 3)
-    .map((e) => ({ ...e, taken: false }));
+    .map((e) => ({ ...jitter(e, random, 0.7, 0.3), taken: false }));
 
   room.phase = 0;
   room.phaseEnteredAt = now();
@@ -386,8 +426,12 @@ function makeWorld(room, dt, io) {
       }
     },
     onSurrender: (npc) => {
-      io.to(room.code).emit('npcSurrender', { id: npc.id });
+      io.to(room.code).emit('npcSurrender', { id: npc.id, ...at3(npc) });
       io.to(room.code).emit('radio', { text: '무전: 한 명이 무기를 버렸다. 체포해라.' });
+    },
+    // 경고를 듣고도 덤비는 자. 화면과 소리로 바로 알려 줘야 대응할 수 있다.
+    onDefy: (npc) => {
+      io.to(room.code).emit('npcDefy', { id: npc.id, hostage: !!npc.hostage, ...at3(npc) });
     },
   };
 }
@@ -436,7 +480,7 @@ function damagePlayer(room, player, dmg, byId, io, from = null) {
     player.defusing = null;
     player.interacting = null;
     emitNoise(room, player.x, player.z, NOISE.bodyFall, 'fall', player.id);
-    io.to(room.code).emit('playerDown', { id: player.id, by: byId, revivable: true });
+    io.to(room.code).emit('playerDown', { id: player.id, by: byId, revivable: true, ...at3(player) });
     checkMissionEnd(room, io);
   }
 }
@@ -445,7 +489,7 @@ function killPlayer(room, player, io) {
   player.downed = false;
   player.alive = false;
   player.dead = true;
-  io.to(room.code).emit('playerDead', { id: player.id });
+  io.to(room.code).emit('playerDead', { id: player.id, ...at3(player) });
   checkMissionEnd(room, io);
 }
 
@@ -463,13 +507,15 @@ function damageNpc(room, npc, dmg, byId, io, part = 'body') {
   if (npc.kind === 'civilian') {
     // 민간인 사격은 그 자체로 규칙 위반이다.
     npc.hp = Math.max(0, npc.hp - dmg);
-    io.to(room.code).emit('npcHit', { id: npc.id, hp: npc.hp, dmg, by: byId });
+    io.to(room.code).emit('npcHit', {
+      id: npc.id, hp: npc.hp, dmg, by: byId, kind: 'civilian', ...at3(npc),
+    });
     roeViolation(room, byId, '민간인 사격', io);
     if (npc.hp === 0) {
       npc.alive = false;
       if (npc.hostage) { room.stats.hostageLost = true; room.stats.hostageSaved = false; }
       else room.stats.civiliansLost++;
-      io.to(room.code).emit('npcDown', { id: npc.id, by: byId, civilian: true });
+      io.to(room.code).emit('npcDown', { id: npc.id, by: byId, civilian: true, ...at3(npc) });
     } else {
       npc.panic = 1;
     }
@@ -481,7 +527,9 @@ function damageNpc(room, npc, dmg, byId, io, part = 'body') {
 
   npc.hp = Math.max(0, npc.hp - dmg);
   npc.suppression = Math.min(1, npc.suppression + 0.5);
-  io.to(room.code).emit('npcHit', { id: npc.id, hp: npc.hp, dmg, by: byId, part });
+  io.to(room.code).emit('npcHit', {
+    id: npc.id, hp: npc.hp, dmg, by: byId, part, kind: npc.kind, ...at3(npc),
+  });
 
   if (npc.hp === 0) {
     npc.alive = false;
@@ -490,7 +538,7 @@ function damageNpc(room, npc, dmg, byId, io, part = 'body') {
     if (!wasYielding) room.stats.suspectsNeutralised++;
     if (shooter) shooter.kills++;
     emitNoise(room, npc.x, npc.z, NOISE.bodyFall, 'fall', npc.id);
-    io.to(room.code).emit('npcDown', { id: npc.id, by: byId });
+    io.to(room.code).emit('npcDown', { id: npc.id, by: byId, kind: npc.kind, ...at3(npc) });
     if (npc.hostage) {
       const hostage = room.npcs.find((n) => n.id === 'hostage');
       if (hostage) { hostage.hostage = false; hostage.state = 'comply'; hostage.hands = 1; }
@@ -569,16 +617,18 @@ function explode(room, grenade, io) {
   if (grenade.type === 'flash') {
     for (const p of room.players.values()) {
       if (!p.alive) continue;
-      const strength = flashStrength(at, p, colliders, p.yaw);
-      if (strength <= 0.05) continue;
-      p.blindUntil = Math.max(p.blindUntil, now() + spec.blindSeconds * 1000 * strength);
-      io.to(p.id).emit('flashed', { seconds: spec.blindSeconds * strength });
+      const seconds = flashSeconds(flashStrength(at, p, colliders, p.yaw));
+      if (seconds <= 0) continue;
+      p.blindUntil = Math.max(p.blindUntil, now() + seconds * 1000);
+      io.to(p.id).emit('flashed', { seconds });
     }
     for (const npc of room.npcs) {
       if (!npc.alive) continue;
+      // 적도 똑같이 최소 3초는 못 쏜다. 섬광탄을 던지고 들어갈 시간이 나온다.
       const strength = flashStrength(at, npc, colliders, npc.yaw);
-      if (strength <= 0.05) continue;
-      npc.blindUntil = Math.max(npc.blindUntil || 0, now() + spec.blindSeconds * 1000 * strength);
+      const seconds = flashSeconds(strength);
+      if (seconds <= 0) continue;
+      npc.blindUntil = Math.max(npc.blindUntil || 0, now() + seconds * 1000);
       npc.suppression = Math.min(1, (npc.suppression || 0) + strength * 0.8);
       npc.morale = Math.max(0, (npc.morale ?? 1) - strength * 0.35);
       if (npc.kind === 'civilian') npc.panic = Math.min(1, npc.panic + strength);
@@ -695,7 +745,7 @@ function completeInteraction(room, player, target, io) {
     npc.state = 'surrender';
     room.stats.suspectsArrested++;
     player.arrests++;
-    io.to(room.code).emit('npcArrested', { id: npc.id, by: player.id });
+    io.to(room.code).emit('npcArrested', { id: npc.id, by: player.id, ...at3(npc) });
   } else if (target.kind === 'secure') {
     const npc = room.npcs.find((n) => n.id === target.id);
     if (!npc || npc.secured) return;
@@ -704,21 +754,25 @@ function completeInteraction(room, player, target, io) {
     if (npc.id === 'hostage') room.stats.hostageSaved = true;
     else room.stats.civiliansRescued++;
     player.rescues++;
-    io.to(room.code).emit('civilianSecured', { id: npc.id, by: player.id });
+    io.to(room.code).emit('civilianSecured', {
+      id: npc.id, by: player.id, hostage: npc.id === 'hostage', ...at3(npc),
+    });
     io.to(room.code).emit('radio', { text: MISSION.civilianRescued });
   } else if (target.kind === 'evidence') {
     const item = room.evidence.find((e) => e.id === target.id);
     if (!item || item.taken) return;
     item.taken = true;
     room.stats.evidenceCollected++;
-    io.to(room.code).emit('evidenceTaken', { id: item.id, by: player.id, label: item.label });
+    io.to(room.code).emit('evidenceTaken', {
+      id: item.id, by: player.id, label: item.label, x: item.x, z: item.z,
+    });
   } else if (target.kind === 'revive') {
     const mate = room.players.get(target.id);
     if (!mate || !mate.downed) return;
     mate.downed = false;
     mate.alive = true;
     mate.hp = 45;
-    io.to(room.code).emit('playerRevived', { id: mate.id, by: player.id, hp: mate.hp });
+    io.to(room.code).emit('playerRevived', { id: mate.id, by: player.id, hp: mate.hp, ...at3(mate) });
   }
 }
 
@@ -730,25 +784,38 @@ function shout(room, player, io) {
   if (t - player.lastShout < SHOUT_COOLDOWN) return;
   player.lastShout = t;
   emitNoise(room, player.x, player.z, NOISE.shout, 'shout', player.id);
-  io.to(room.code).emit('playerShout', { id: player.id });
+  io.to(room.code).emit('playerShout', { id: player.id, ...at3(player) });
 
+  const world = makeWorld(room, 0, io);
   const colliders = room.doors.colliders();
   const eye = { x: player.x, y: player.y + PLAYER_EYE, z: player.z };
+  const observer = { x: player.x, z: player.z, yaw: player.yaw };
+  const alliesDown = room.suspects.filter(
+    (s) => !s.alive || s.arrested || s.state === 'surrender').length;
+  const tally = { heard: 0, aimed: 0, surrender: 0, defy: 0, shaken: 0, civilians: 0 };
+
   for (const npc of room.npcs) {
     if (!npc.alive || npc.secured || npc.arrested) continue;
     const d = dist2D(player, npc);
-    if (d > SHOUT_RANGE) continue;
+    if (d > WARNING.range) continue;
     if (!hasClearShot(eye, npc, 1.3, colliders)) continue;
-    if (!inFieldOfView({ x: player.x, z: player.z, yaw: player.yaw }, npc, Math.PI * 0.9)) continue;
+    // 목소리는 넓게 들리지만, "총구를 겨눈" 것은 조준선 안에 들어왔을 때뿐이다.
+    if (!inFieldOfView(observer, npc, Math.PI * 1.1)) continue;
+    tally.heard++;
+    const aimed = inFieldOfView(observer, npc, WARNING.aimAngle * 2, 0.8);
+    if (aimed) tally.aimed++;
 
     if (npc.kind === 'civilian') {
       npc.commandedAt = t;
-    } else if (npc.state !== 'surrender') {
-      // 총구를 들이대고 외치면 사기가 꺾인다. 인질을 잡고 있으면 통하지 않는다.
-      npc.morale = Math.max(0, npc.morale - (npc.hostage ? 0.04 : 0.22));
-      npc.suppression = Math.min(1, npc.suppression + 0.25);
+      tally.civilians++;
+      continue;
     }
+    const outcome = warnSuspect(npc, world, { aimed, distance: d, alliesDown, from: player });
+    if (tally[outcome] !== undefined) tally[outcome]++;
   }
+  // 무엇이 일어났는지 외친 본인에게만 알려 준다. 아무 반응이 없어도
+  // "아무도 못 들었다"는 것 자체가 정보다.
+  io.to(player.id).emit('shoutResult', tally);
 }
 
 /* ========================================================================== *
@@ -829,6 +896,25 @@ function updateObjectives(room, dt, io) {
     room.flags.reinforced = true;
     spawnReinforcements(room, io);
   }
+
+  broadcastObjectives(room, io);
+}
+
+/**
+ * 미션표 갱신.
+ *
+ * 예전에는 단계가 "통째로" 끝날 때만 목표 목록을 보냈다. 그래서 외곽 경비를
+ * 다 잡아도 화면의 "0/2" 가 그대로 남아 있었고, 플레이어는 자기가 한 일이
+ * 반영되지 않는다고 느꼈다. 목표 하나가 바뀔 때마다 보낸다.
+ *
+ * 매 틱 보내면 낭비이므로 내용이 실제로 달라졌을 때만 보낸다.
+ */
+function broadcastObjectives(room, io) {
+  const report = objectiveReport(room);
+  const signature = JSON.stringify(report.list) + report.phase;
+  if (signature === room.objectiveSignature) return;
+  room.objectiveSignature = signature;
+  io.to(room.code).emit('objectives', report);
 }
 
 function spawnReinforcements(room, io) {
@@ -1213,7 +1299,7 @@ io.on('connection', (socket) => {
     if (me.reloadUntil > 0 || me.ammo >= w.mag || me.reserve <= 0) return;
     me.reloadUntil = now() + w.reload * 1000;
     emitNoise(room, me.x, me.z, NOISE.reload, 'reload', me.id);
-    io.to(room.code).emit('playerReload', { id: me.id, duration: w.reload });
+    io.to(room.code).emit('playerReload', { id: me.id, duration: w.reload, ...at3(me) });
   });
 
   socket.on('defuse', ({ siteId, active } = {}) => {

@@ -8,6 +8,7 @@ import {
 import {
   createSuspect, createCivilian, updateSuspect, updateCivilian, deliverNoise,
   planOccupancy, updateMorale, shouldSurrender, spotTarget, PERSONALITIES,
+  warnSuspect, surrenderChance, WARNING,
 } from '../public/js/suspect-ai.js';
 
 const closedDoors = () => new DoorSet(rollDoorStates(() => 0.9));
@@ -47,6 +48,7 @@ function makeWorld(overrides = {}) {
     onStateChange: () => {},
     onContact: () => {},
     onSurrender: () => {},
+    onDefy: () => {},
     ...overrides,
   };
   world.fired = fired; world.noises = noises; world.opened = opened;
@@ -293,4 +295,86 @@ test('용의자는 벽 너머 플레이어 위치를 알 수 없다', () => {
   assert.equal(npc.targetId, null);
   assert.equal(world.fired.length, 0);
   assert.ok(['guard', 'patrol'].includes(npc.state));
+});
+
+/* ========================================================================== *
+ *  구두 경고 (V)
+ *
+ *  버튼을 눌러도 아무 일이 없으면 고장 난 것과 같다. 반대로 항상 항복하면
+ *  경고 한 번으로 판이 끝난다. 확률이 상황에 따라 움직이는지 확인한다.
+ * ========================================================================== */
+test('겨누고 외치면 항복 확률이 오르고, 멀리서 소리만 지르면 거의 오르지 않는다', () => {
+  const post = POSTS.find((p) => p.room === 'GALLERY');
+  const npc = createSuspect('s', { post, personality: 'defensive' });
+  npc.morale = 0.5;
+
+  const aimed = surrenderChance(npc, { aimed: true, distance: 3 });
+  const shouted = surrenderChance(npc, { aimed: false, distance: 3 });
+  const faraway = surrenderChance(npc, { aimed: true, distance: 12 });
+  assert.ok(aimed > shouted * 2, `겨눈 쪽이 훨씬 높아야 한다: ${aimed} vs ${shouted}`);
+  assert.ok(aimed > faraway, `가까울수록 높아야 한다: ${aimed} vs ${faraway}`);
+
+  // 다치고 동료가 쓰러졌고 계속 눌린 상태면 확실히 더 높다.
+  const cornered = createSuspect('s2', { post, personality: 'defensive' });
+  cornered.morale = 0.3; cornered.hp = 40; cornered.pressure = 1;
+  assert.ok(surrenderChance(cornered, { aimed: true, distance: 3, alliesDown: 3 }) > aimed);
+
+  // 인질을 잡고 있으면 통하지 않는다.
+  const holder = createSuspect('hvt', { post, personality: 'leader', kind: 'hvt' });
+  holder.hostage = 'hostage';
+  assert.equal(surrenderChance(holder, { aimed: true, distance: 2 }), 0);
+});
+
+test('경고 결과: 항복 / 반항 / 흔들림이 모두 일어나고, 인질범은 응하지 않는다', () => {
+  const post = POSTS.find((p) => p.room === 'GALLERY');
+  const from = { id: 'p1', x: post.x, z: post.z + 3 };
+
+  // 주사위가 낮으면 항복한다.
+  const yields = createSuspect('a', { post, personality: 'coward' });
+  yields.morale = 0.2;
+  const luckyWorld = makeWorld({ random: () => 0.01 });
+  assert.equal(warnSuspect(yields, luckyWorld, { aimed: true, distance: 3, from }), 'surrender');
+  assert.equal(yields.state, 'surrender');
+  assert.equal(yields.hands, 1);
+  assert.equal(yields.weaponDropped, true);
+
+  // 주사위가 중간이면 오히려 덤빈다. 이때 나를 목표로 삼는다.
+  const fighter = createSuspect('b', { post, personality: 'aggressive' });
+  const unluckyWorld = makeWorld({ random: () => 0.35 });
+  assert.equal(warnSuspect(fighter, unluckyWorld, { aimed: true, distance: 3, from }), 'defy');
+  assert.equal(fighter.state, 'engage');
+  assert.equal(fighter.targetId, 'p1');
+
+  // 주사위가 높으면 흔들리기만 한다. 압박은 남는다.
+  const shaken = createSuspect('c', { post, personality: 'defensive' });
+  const coldWorld = makeWorld({ random: () => 0.99 });
+  assert.equal(warnSuspect(shaken, coldWorld, { aimed: true, distance: 3, from }), 'shaken');
+  assert.ok(shaken.pressure > 0.4, '압박이 쌓인다');
+
+  // 같은 사람에게 연달아 외쳐도 쿨다운 안에는 다시 통하지 않는다.
+  assert.equal(warnSuspect(shaken, coldWorld, { aimed: true, distance: 3, from }), 'ignored');
+
+  // 인질을 잡은 자는 무슨 수를 써도 응하지 않는다.
+  const holder = createSuspect('hvt', { post, personality: 'leader', kind: 'hvt' });
+  holder.hostage = 'hostage';
+  assert.equal(warnSuspect(holder, luckyWorld, { aimed: true, distance: 2, from }), 'defy');
+  assert.notEqual(holder.state, 'surrender');
+});
+
+test('경고로 쌓인 압박은 사기를 깎고, 시간이 지나면 풀린다', () => {
+  const post = POSTS.find((p) => p.room === 'GALLERY');
+  const npc = createSuspect('s', { post, personality: 'defensive' });
+  const world = makeWorld({ random: () => 0.99 });
+
+  warnSuspect(npc, world, { aimed: true, distance: 3 });
+  const pressured = npc.pressure;
+  assert.ok(pressured > 0);
+
+  const calm = createSuspect('t', { post, personality: 'defensive' });
+  updateMorale(calm, { ...world, dt: 1, alliesDown: 0, alliesNear: 0 });
+  updateMorale(npc, { ...world, dt: 1, alliesDown: 0, alliesNear: 0 });
+  assert.ok(npc.morale < calm.morale, '겨눠진 쪽의 사기가 낮다');
+
+  advance(npc, world, WARNING.cooldown / 1000 + 8);
+  assert.ok(npc.pressure < pressured * 0.35, `시간이 지나면 풀린다: ${npc.pressure}`);
 });

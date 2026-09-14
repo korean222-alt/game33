@@ -10,10 +10,18 @@
  *    flags, stats, standingPlayers, phase, objectiveDone
  * ========================================================================== */
 
-import { EXTRACTION } from './map-data.js';
+import { EXTRACTION, AREAS } from './map-data.js';
 import { OBJECTIVES, PHASES } from './mission-story.js';
 
 const dist2D = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+
+/** 구역 이름 -> 사람이 읽는 이름 ('LIBRARY' -> '서재'). */
+const ZONE_LABEL = new Map(AREAS.map((a) => [a.name, a.label]));
+const zoneLabel = (name) => (name ? ZONE_LABEL.get(name) || name : '위치 확인 필요');
+/** "거래 장부 · 서재" 처럼 무엇이 어디에 남았는지 한 줄로. */
+const whereLeft = (list) => list
+  .map((e) => [e.label, e.room ? zoneLabel(e.room) : null].filter(Boolean).join(' · '))
+  .filter(Boolean).join(' / ');
 
 /** 더 이상 위협이 아닌 상태: 쓰러졌거나, 체포됐거나, 손을 들었다. */
 export const neutralised = (s) => !s.alive || s.arrested || s.state === 'surrender';
@@ -33,8 +41,12 @@ export function objectiveState(room, id) {
       return { done: list.length > 0 && handled.length === list.length, have: handled.length, need: list.length };
     }
     case 'devices': {
-      const done = room.sites.filter((s) => s.defused).length;
-      return { done: done === room.sites.length, have: done, need: room.sites.length };
+      const left = room.sites.filter((s) => !s.defused);
+      const done = room.sites.length - left.length;
+      return {
+        done: left.length === 0, have: done, need: room.sites.length,
+        detail: whereLeft(left),
+      };
     }
     case 'hvt': {
       const hvt = room.npcs.find((n) => n.kind === 'hvt');
@@ -58,8 +70,14 @@ export function objectiveState(room, id) {
       return { done, have: inZone.length, need: Math.max(1, standing.length) };
     }
     case 'evidence': {
-      const taken = room.evidence.filter((e) => e.taken).length;
-      return { done: taken === room.evidence.length, have: taken, need: room.evidence.length };
+      const left = room.evidence.filter((e) => !e.taken);
+      const taken = room.evidence.length - left.length;
+      // 어느 방에 무엇이 남았는지 적어 준다. "증거 회수" 라고만 쓰여 있으면
+      // 저택 전체를 다시 돌아야 한다.
+      return {
+        done: left.length === 0, have: taken, need: room.evidence.length,
+        detail: whereLeft(left),
+      };
     }
     case 'quiet':
       return { done: room.stats.civiliansLost === 0 && !room.stats.hostageLost, have: 0, need: 0 };
@@ -84,6 +102,7 @@ export function objectiveReport(room) {
       return {
         id, label: OBJECTIVES[id]?.label || id, kind: OBJECTIVES[id]?.kind || 'primary',
         done, have: state.have, need: state.need, failed: !!state.failed,
+        detail: done ? '' : (state.detail || ''),
       };
     }),
   };

@@ -220,11 +220,25 @@ export class World {
     entry.state = state;
     entry.target = isBlocking(state) ? 0 : Math.PI * 0.52;
     if (state === DOOR.DESTROYED) entry.target = Math.PI * 0.62;
-    entry.pivot.visible = state !== DOOR.DESTROYED;
+    entry.pivot.visible = !entry.peeking && state !== DOOR.DESTROYED;
   }
 
   applyDoorStates(list) {
     for (const { id, state } of list) this.setDoorState(id, state);
+  }
+
+  /**
+   * 문틈으로 볼 때는 문짝을 잠깐 감춘다.
+   *
+   * 카메라가 문짝 바로 앞(26cm)에 붙기 때문에 그냥 두면 나무판만 화면에 가득
+   * 찬다. 열쇠구멍 모양 마스크가 가장자리를 가려 주므로, 실제로 보이는 것은
+   * 구멍만 한 크기다. 문 자체는 여전히 닫혀 있고 총알도 사람도 막는다.
+   */
+  setDoorPeek(id, on) {
+    const entry = this.doorMeshes.get(id);
+    if (!entry) return;
+    entry.peeking = !!on;
+    entry.pivot.visible = on ? false : entry.state !== DOOR.DESTROYED;
   }
 
   _buildFurniture() {
@@ -344,25 +358,66 @@ export class World {
     }
   }
 
-  /** 증거 위치는 매 판 달라지므로 matchStart 때 만든다. */
+  /**
+   * 증거.
+   *
+   * 예전에는 바닥에 놓인 40cm 짜리 초록 상자 하나였다. 밤이고, 방은 넓고,
+   * 가구는 많다. "장부를 회수하라"는 지시를 받고도 방을 몇 바퀴 돌게 된다.
+   * 그래서 세 가지를 같이 세운다.
+   *
+   *   1) 무엇인지 알아볼 수 있는 물건  (장부는 책 더미, 드라이브는 작은 기기)
+   *   2) 천장까지 올라가는 가느다란 빛기둥 — 방 문에서 보인다
+   *   3) 이름표 — 가까이 가면 무엇을 어떻게 회수하는지 읽힌다
+   *
+   * 벽을 뚫고 보이지는 않는다. 방에 들어와야 보인다.
+   */
   buildEvidence(list = []) {
     for (const marker of this.evidenceMarkers.values()) {
       this.scene.remove(marker.group);
       marker.mat.dispose();
+      marker.beamMat.dispose();
+      marker.label.material.map.dispose();
+      marker.label.material.dispose();
     }
     this.evidenceMarkers.clear();
+
     for (const item of list) {
       const group = new THREE.Group();
-      group.position.set(item.x, 0, item.z);
+      // 실내 바닥은 y=0.02 에 깔려 있다. 물건을 y=0 에 놓으면 밑동이 바닥에
+      // 파묻혀 잘려 보인다.
+      group.position.set(item.x, 0.025, item.z);
+
       const mat = new THREE.MeshStandardMaterial({
-        color: 0xb8c4a0, emissive: 0x4c5a3a, emissiveIntensity: 1.1, roughness: .6,
+        color: 0xd8cfa8, emissive: 0xb8912f, emissiveIntensity: 1.1, roughness: .62,
       });
-      const bag = new THREE.Mesh(new THREE.BoxGeometry(0.4, 0.16, 0.3), mat);
-      bag.position.y = 0.08;
-      bag.castShadow = true;
-      group.add(bag);
+      for (const piece of evidenceShape(item.id)) {
+        const mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(piece.w, piece.h, piece.d),
+          piece.plain
+            ? new THREE.MeshStandardMaterial({ color: 0x2a2620, roughness: .8 })
+            : mat,
+        );
+        mesh.position.set(piece.x || 0, piece.y, piece.z || 0);
+        mesh.rotation.y = piece.ry || 0;
+        mesh.castShadow = true;
+        group.add(mesh);
+      }
+
+      // 빛기둥. 방 안 어디에서든 "저기에 뭔가 있다"가 보인다.
+      const beamMat = new THREE.MeshBasicMaterial({
+        color: 0xffd98a, transparent: true, opacity: 0.16,
+        depthWrite: false, blending: THREE.AdditiveBlending,
+      });
+      const beam = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.05, 2.6, 10, 1, true), beamMat);
+      beam.position.y = 1.35;
+      group.add(beam);
+
+      const label = makeLabel(`${item.label}\nF 길게 눌러 회수`);
+      label.position.y = 1.05;
+      group.add(label);
+
       this.scene.add(group);
-      this.evidenceMarkers.set(item.id, { group, mat, taken: false });
+      this.evidenceMarkers.set(item.id, { group, mat, beam, beamMat, label, taken: false });
     }
   }
 
@@ -410,11 +465,12 @@ export class World {
     this.setExtractionActive(false);
     for (const entry of this.doorMeshes.values()) {
       entry.state = DOOR.CLOSED; entry.angle = entry.target = 0;
+      entry.peeking = false;
       entry.pivot.rotation.y = 0; entry.pivot.visible = true;
     }
   }
 
-  update(dt) {
+  update(dt, camera = null) {
     this._t += dt;
     if (this.dust) this.dust.position.y = Math.sin(this._t * .12) * .08;
 
@@ -435,7 +491,84 @@ export class World {
     for (const m of this.evidenceMarkers.values()) {
       if (m.taken) continue;
       m.mat.emissiveIntensity = 0.8 + blink * 0.8;
+      m.beamMat.opacity = 0.1 + blink * 0.14;
+      if (!camera) continue;
+      m.label.quaternion.copy(camera.quaternion);
+      // 이름표는 가까울 때만. 멀리서 글자가 떠 있으면 야간 작전의 긴장이 깨진다.
+      m.label.visible = m.group.position.distanceTo(camera.position) < 9;
     }
     if (this.extractionMat) this.extractionMat.opacity = 0.14 + blink * 0.18;
   }
+}
+
+/* ========================================================================== *
+ *  증거 물건의 생김새
+ *
+ *  "장부" 라고만 쓰여 있으면 무엇을 찾아야 하는지 모른다. 물건마다 다르게
+ *  생기게 해서 화면만 보고도 알아볼 수 있게 한다. (단위: m)
+ * ========================================================================== */
+function evidenceShape(id) {
+  switch (id) {
+    case 'ledger':    // 거래 장부 - 책 세 권을 쌓았다
+      return [
+        { w: 0.34, h: 0.07, d: 0.26, y: 0.035 },
+        { w: 0.32, h: 0.06, d: 0.24, y: 0.1, ry: 0.18 },
+        { w: 0.3, h: 0.05, d: 0.23, y: 0.16, ry: -0.12 },
+      ];
+    case 'drive':     // 암호 드라이브 - 손바닥만 한 기기
+      return [
+        { w: 0.3, h: 0.05, d: 0.22, y: 0.025, plain: true },
+        { w: 0.16, h: 0.08, d: 0.11, y: 0.09 },
+      ];
+    case 'radio':     // 무전 기록 - 무전기와 안테나
+      return [
+        { w: 0.18, h: 0.26, d: 0.12, y: 0.13, plain: true },
+        { w: 0.02, h: 0.4, d: 0.02, y: 0.46 },
+        { w: 0.22, h: 0.04, d: 0.16, y: 0.02 },
+      ];
+    case 'passport':  // 위조 여권 - 얇은 책자 여러 권
+      return [
+        { w: 0.13, h: 0.03, d: 0.18, y: 0.015 },
+        { w: 0.13, h: 0.03, d: 0.18, y: 0.05, x: 0.05, ry: 0.4 },
+        { w: 0.13, h: 0.03, d: 0.18, y: 0.085, x: -0.03, ry: -0.3 },
+      ];
+    case 'cash':      // 현금 가방
+      return [
+        { w: 0.46, h: 0.3, d: 0.18, y: 0.15, plain: true },
+        { w: 0.2, h: 0.04, d: 0.03, y: 0.32 },
+      ];
+    default:          // 서류철 / 출입 기록
+      return [
+        { w: 0.28, h: 0.04, d: 0.36, y: 0.02, plain: true },
+        { w: 0.24, h: 0.03, d: 0.32, y: 0.055 },
+      ];
+  }
+}
+
+/** 두 줄까지 들어가는 작은 이름표 스프라이트. */
+function makeLabel(text) {
+  const lines = String(text).split('\n');
+  const cv = document.createElement('canvas');
+  cv.width = 512; cv.height = 128;
+  const g = cv.getContext('2d');
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  lines.forEach((line, i) => {
+    const big = i === 0;
+    g.font = `${big ? 'bold 44px' : '30px'} -apple-system, sans-serif`;
+    g.lineWidth = 7;
+    g.strokeStyle = 'rgba(0,0,0,.88)';
+    const y = lines.length === 1 ? 64 : 42 + i * 48;
+    g.strokeText(line, 256, y);
+    g.fillStyle = big ? '#ffdf9a' : '#dfe7e2';
+    g.fillText(line, 256, y);
+  });
+  const texture = new THREE.CanvasTexture(cv);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  const sprite = new THREE.Sprite(new THREE.SpriteMaterial({
+    map: texture, transparent: true, depthTest: true, depthWrite: false, sizeAttenuation: true,
+  }));
+  sprite.scale.set(1.3, 0.33, 1);
+  sprite.renderOrder = 5;
+  return sprite;
 }

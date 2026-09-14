@@ -13,12 +13,19 @@
  *
  *  사용법
  *    node scripts/swap-character.mjs <새 캐릭터 파일(.fbx | .glb | .gltf)>
+ *    node scripts/swap-character.mjs --role <officer|suspect|hostage> <파일>
  *
- *    예) Mixamo 에서 Swat/Police 계열 캐릭터를 T 포즈(동작 없음)로 내려받아
+ *    예) 전원을 같은 모델로:
  *        node scripts/swap-character.mjs ~/Downloads/swat.fbx
+ *        인질만 다른 사람으로:
+ *        node scripts/swap-character.mjs --role hostage ~/Downloads/civilian.fbx
+ *        납치범(용의자·주범)만:
+ *        node scripts/swap-character.mjs --role suspect ~/Downloads/robber.fbx
  *
  *  결과
- *    public/assets/models/character-animated.glb 를 덮어쓴다.
+ *    역할을 안 주면 public/assets/models/character-animated.glb 를 덮어쓴다.
+ *    역할을 주면 character-<역할>.glb 로 저장하고 roles.json 에 등록한다.
+ *    (등록되지 않은 역할은 기본 캐릭터를 그대로 쓴다)
  *    이어서 반드시:
  *      node scripts/asset-integrity.mjs --write
  *      npm test && npm run build:static
@@ -39,8 +46,16 @@ import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, '..');
-const OUT = path.join(ROOT, 'public', 'assets', 'models', 'character-animated.glb');
+const MODELS_DIR = path.join(ROOT, 'public', 'assets', 'models');
+const OUT = path.join(MODELS_DIR, 'character-animated.glb');
 const CURRENT = '/public/assets/models/character-animated.glb';
+const ROLES_FILE = path.join(MODELS_DIR, 'roles.json');
+/** 역할 이름 -> [저장할 파일, config.js 의 모델 키] */
+const ROLES = {
+  officer: ['character-officer.glb', 'characterOfficer'],
+  suspect: ['character-suspect.glb', 'characterSuspect'],
+  hostage: ['character-hostage.glb', 'characterHostage'],
+};
 const TARGET_HEIGHT = 1.8;
 const TEXTURE_SIZE = 512;
 
@@ -207,12 +222,34 @@ const SWAP = async ({ origin, current, incomingKind, textureSize, targetHeight }
 };
 
 /* ========================================================================== */
+/** roles.json 의 present 목록을 갱신한다. 여기 없는 역할은 불러오지 않는다. */
+async function registerRole(modelKey) {
+  const manifest = JSON.parse(await fs.readFile(ROLES_FILE, 'utf8'));
+  const present = new Set(manifest.present || []);
+  present.add(modelKey);
+  manifest.present = [...present].sort();
+  await fs.writeFile(ROLES_FILE, JSON.stringify(manifest, null, 2) + '\n');
+  return manifest.present;
+}
+
 async function main() {
-  const source = process.argv[2];
+  const args = process.argv.slice(2);
+  let role = null;
+  const roleAt = args.findIndex((a) => a === '--role' || a.startsWith('--role='));
+  if (roleAt >= 0) {
+    role = args[roleAt].includes('=') ? args[roleAt].split('=')[1] : args[roleAt + 1];
+    args.splice(roleAt, args[roleAt].includes('=') ? 1 : 2);
+    if (!ROLES[role]) {
+      console.error(`알 수 없는 역할: ${role} (쓸 수 있는 값: ${Object.keys(ROLES).join(' | ')})`);
+      process.exit(1);
+    }
+  }
+  const source = args[0];
   if (!source) {
-    console.error('사용법: node scripts/swap-character.mjs <새 캐릭터 파일(.fbx | .glb | .gltf)>');
+    console.error('사용법: node scripts/swap-character.mjs [--role officer|suspect|hostage] <새 캐릭터 파일(.fbx | .glb | .gltf)>');
     process.exit(1);
   }
+  const outFile = role ? path.join(MODELS_DIR, ROLES[role][0]) : OUT;
   const sourceFile = path.resolve(source);
   const extension = path.extname(sourceFile).toLowerCase();
   if (!['.fbx', '.glb', '.gltf'].includes(extension)) {
@@ -235,11 +272,15 @@ async function main() {
     if (result.error) throw new Error(result.error);
 
     const bytes = Buffer.from(result.base64, 'base64');
-    await fs.writeFile(OUT, bytes);
+    await fs.writeFile(outFile, bytes);
     console.log(`  원본 키 ${result.height.toFixed(1)} 단위 -> ${TARGET_HEIGHT} m`);
     console.log(`  이름을 바꿔 붙인 트랙 ${result.retargeted}개`);
     console.log(`  클립 ${result.clips.length}개: ${result.clips.join(', ')}`);
-    console.log(`  저장됨 -> ${path.relative(ROOT, OUT)} (${(bytes.length / 1048576).toFixed(2)} MB)`);
+    console.log(`  저장됨 -> ${path.relative(ROOT, outFile)} (${(bytes.length / 1048576).toFixed(2)} MB)`);
+    if (role) {
+      const present = await registerRole(ROLES[role][1]);
+      console.log(`  역할 등록: ${role} -> ${ROLES[role][1]}  (지금 쓰는 역할별 모델: ${present.join(', ')})`);
+    }
     console.log('\n  다음 순서로 마무리하세요:');
     console.log('    node scripts/asset-integrity.mjs --write');
     console.log('    npm test && npm run build:static');

@@ -1,0 +1,9 @@
+{
+  "note": "역할별 캐릭터 모델 목록. 여기 적힌 것만 불러온다. scripts/swap-character.mjs --role <역할> <파일> 이 자동으로 갱신한다.",
+  "roles": {
+    "characterOfficer": "character-officer.glb",
+    "characterSuspect": "character-suspect.glb",
+    "characterHostage": "character-hostage.glb"
+  },
+  "present": []
+}
