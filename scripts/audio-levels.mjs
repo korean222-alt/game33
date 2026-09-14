@@ -5,8 +5,12 @@
 import { spawn } from 'node:child_process';
 import { chromium } from 'playwright';
 
-/* 실행:  node scripts/audio-levels.mjs       (실제로 들리는 크기)
- *        RAW=1 node scripts/audio-levels.mjs (후처리 없는 원래 크기)
+/* 실행:  npm run audio:levels                (실제로 들리는 크기)
+ *        RAW=1 npm run audio:levels          (후처리 없는 원래 크기)
+ *
+ * playwright 는 개발용이라 package.json 에 넣지 않았다. 처음 한 번만:
+ *   npm install --no-save playwright && npx playwright install chromium
+ * (미리 받아 둔 브라우저가 있으면 CHROMIUM_PATH=/경로/chrome 으로 지정한다)
  *
  * 기준치 (peak):  총성 0.6~0.9 · 폭발 0.7~1.0 · 문 0.25~0.5 ·
  *                 장전/수갑/비명 0.3~0.6 · 발소리 0.05~0.15
