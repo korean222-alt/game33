@@ -149,6 +149,16 @@ class Room {
 
   resetMission() {
     this.doors = new DoorSet(rollDoorStates());
+    /* 문 상태를 다음 스냅샷에 실을지 여부.
+     *
+     *  문 36개를 매 틱 보내면 스냅샷의 3분의 1이 문으로 찬다(1,387 / 4,248 바이트).
+     *  최초 상태는 matchStart 가, 변경은 doorState 이벤트가 이미 나르므로 매 틱
+     *  실리는 배열은 그 둘과 겹친다. 그래도 아주 없애지는 않고, 바뀐 직후 한 번은
+     *  전량을 실어 doorState 를 놓친 클라이언트가 스스로 맞춰지게 둔다.
+     *  클라이언트는 snap.doors 가 없는 경우를 이미 처리한다(game.js 의 if).
+     *
+     *  문 묶음을 통째로 갈아 끼우는 자리에서는 반드시 같이 세워야 한다. */
+    this.doorsDirty = true;
     this.npcs = [];
     this.grenades = [];
     this.clouds = [];
@@ -239,6 +249,7 @@ function setupMission(room) {
 
   // 문 상태를 새로 뽑되, 조용히 들어갈 수 있는 진입구는 최소 하나 남긴다.
   room.doors = new DoorSet(ensureQuietEntry(rollDoorStates(random), random));
+  room.doorsDirty = true;
 
   // --- 용의자 배치: 방마다 있을 수도, 없을 수도 ---
   //
@@ -455,6 +466,7 @@ function makeWorld(room, dt, io) {
  * ========================================================================== */
 function setDoorState(room, id, state, io) {
   if (!room.doors.setState(id, state)) return false;
+  room.doorsDirty = true;
   io.to(room.code).emit('doorState', { id, state });
   return true;
 }
@@ -1186,7 +1198,7 @@ function tickRoom(room, io) {
     phase: room.phase,
     power: room.power ? 1 : 0,
     generatorStarted: room.generatorStarted,
-    doors: room.doors.snapshot(),
+    ...(room.doorsDirty ? { doors: room.doors.snapshot() } : null),
     players: [...room.players.values()].map((p) => ({
       id: p.id, x: +p.x.toFixed(3), y: +p.y.toFixed(3), z: +p.z.toFixed(3),
       yaw: +p.yaw.toFixed(3), pitch: +p.pitch.toFixed(3),
@@ -1213,6 +1225,7 @@ function tickRoom(room, io) {
       id: g.id, type: g.type, x: +g.x.toFixed(2), y: +g.y.toFixed(2), z: +g.z.toFixed(2),
     })),
   });
+  room.doorsDirty = false;
 }
 
 /* ========================================================================== *
