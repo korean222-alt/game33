@@ -1,0 +1,4 @@
+{
+  "note": "자동 생성됩니다. 직접 고치지 말고 npm run import:audio 를 돌리세요. clips 가 비어 있으면 모든 소리를 합성으로 만듭니다. 파일 넣는 방법은 같은 폴더의 README.md 를 보세요.",
+  "clips": {}
+}

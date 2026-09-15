@@ -6,7 +6,8 @@ function context() {
   const nodes = [], starts = [];
   const param = () => ({ value: 0, setValueAtTime() {}, linearRampToValueAtTime() {}, exponentialRampToValueAtTime() {} });
   const node = () => {
-    const n = { gain: param(), frequency: param(), Q: param(), pan: param(), disconnected: false,
+    const n = { gain: param(), frequency: param(), Q: param(), pan: param(),
+      detune: param(), playbackRate: param(), loop: false, disconnected: false,
       connect() {}, disconnect() { this.disconnected = true; },
       start(time) { starts.push(time); }, stop() { this.stopped = true; } };
     nodes.push(n); return n;
@@ -98,9 +99,10 @@ test('사람 소리: 비명 · 수갑 · 작업 · 이명이 모두 난다', asy
   await audio.unlock();
   const layers = (play) => { audio.stop(); play(); return audio.sources.size; };
 
-  // 비명은 목소리 한 겹 + 숨소리 한 겹
-  assert.equal(layers(() => audio.scream(null, 'pain')), 2);
-  assert.equal(layers(() => audio.scream({ x: 4, y: 1, z: 0 }, 'death')), 2);
+  // 비명은 성대 두 겹 + 거친 숨 한 겹 + 숨소리 한 겹.
+  // 성대를 두 겹 겹치고 숨을 섞는 것이 "합성기 소리" 와 "목소리" 를 가른다.
+  assert.equal(layers(() => audio.scream(null, 'pain')), 4);
+  assert.equal(layers(() => audio.scream({ x: 4, y: 1, z: 0 }, 'death')), 4);
   // 수갑은 래칫 일곱 번 + 잠김 두 겹
   assert.equal(layers(() => audio.cuff({ x: 1, y: 0, z: 1 })), 9);
   assert.equal(layers(() => audio.work(null, 'defuse')), 3);
@@ -109,7 +111,7 @@ test('사람 소리: 비명 · 수갑 · 작업 · 이명이 모두 난다', asy
   assert.equal(layers(() => audio.pin()), 3);
   assert.equal(layers(() => audio.tinnitus(3)), 2);
   assert.equal(layers(() => audio.beep()), 2);
-  assert.equal(layers(() => audio.cough()), 2);
+  assert.equal(layers(() => audio.cough()), 4);       // 목소리 세 겹 + 숨 한 겹
   audio.dispose();
 });
 
@@ -128,21 +130,79 @@ test('남의 장전 소리는 내 장전을 취소하지 않는다', async () =>
 test('음성 합성이 없는 브라우저에서도 조용히 넘어간다', async () => {
   const ctx = context(), audio = new GameAudio({ contextFactory: () => ctx });
   await audio.unlock();
-  assert.equal(audio.speak('Drop the weapon!'), false);   // globalThis.speechSynthesis 없음
+  assert.equal(audio.speak('무기 버려!'), false);   // globalThis.speechSynthesis 없음
+  assert.equal(audio.canSpeak('ko-KR'), false);
 
   const spoken = [];
-  globalThis.speechSynthesis = { speak: (u) => spoken.push(u), cancel: () => spoken.push('cancel') };
+  globalThis.speechSynthesis = {
+    speak: (u) => spoken.push(u), cancel: () => spoken.push('cancel'), getVoices: () => [],
+  };
   globalThis.SpeechSynthesisUtterance = function Utterance(text) { this.text = text; };
   try {
-    assert.equal(audio.speak('Drop the weapon!'), true);
-    assert.equal(spoken[0].text, 'Drop the weapon!');
-    assert.equal(spoken[0].lang, 'en-US');
+    assert.equal(audio.speak('무기 버려!'), true);
+    assert.equal(spoken[0].text, '무기 버려!');
+    assert.equal(spoken[0].lang, 'ko-KR');
     audio.setEnabled(false);
-    assert.equal(audio.speak('Hands up!'), false, '소리를 끄면 말도 하지 않는다');
+    assert.equal(audio.speak('손 들어!'), false, '소리를 끄면 말도 하지 않는다');
   } finally {
     delete globalThis.speechSynthesis;
     delete globalThis.SpeechSynthesisUtterance;
   }
+  audio.dispose();
+});
+
+/* 화면 자막은 전부 한국어인데 대사만 영어로 나가고 있었다. 더 나빴던 것은
+ * lang 을 'en-US' 로 고정해 두고 목소리는 고르지 않은 점이다. 한국어로 맞춰 둔
+ * 휴대폰에는 영어 목소리가 없는 경우가 많고, 그러면 한국어 목소리가 영어 문장을
+ * 철자대로 읽어서 알아들을 수 없는 소리가 났다. */
+test('말할 때는 그 언어를 읽을 수 있는 목소리를 직접 고른다', async () => {
+  const ctx = context(), audio = new GameAudio({ contextFactory: () => ctx });
+  await audio.unlock();
+  const spoken = [];
+  const voices = [
+    { name: 'Samantha', lang: 'en-US' },
+    { name: 'Yuna', lang: 'ko-KR' },
+    { name: 'Kyoko', lang: 'ja-JP' },
+  ];
+  globalThis.speechSynthesis = {
+    speak: (u) => spoken.push(u), cancel: () => {}, getVoices: () => voices,
+  };
+  globalThis.SpeechSynthesisUtterance = function Utterance(text) { this.text = text; };
+  try {
+    assert.equal(audio.canSpeak('ko-KR'), true);
+    audio.speak('경찰이다! 무기 버려!');
+    assert.equal(spoken[0].voice.name, 'Yuna', '한국어 문장을 영어 목소리로 읽고 있다');
+
+    // 지역만 다른 경우에도 같은 언어면 쓴다 (ko-KR 요청 -> ko 목소리)
+    voices[1] = { name: '표준한국어', lang: 'ko' };
+    audio.speak('손 들어!');
+    assert.equal(spoken[1].voice.name, '표준한국어');
+
+    // 그 언어를 읽을 목소리가 아예 없으면 canSpeak 가 false 여야 한다.
+    // 부르는 쪽이 영어 문장이나 합성 고함으로 대신할 수 있다.
+    voices.splice(1, 1);
+    assert.equal(audio.canSpeak('ko-KR'), false);
+    assert.equal(audio.canSpeak('en-US'), true);
+  } finally {
+    delete globalThis.speechSynthesis;
+    delete globalThis.SpeechSynthesisUtterance;
+  }
+  audio.dispose();
+});
+
+/* 넣어 둔 녹음이 있으면 그쪽을 쓰고, 없는 소리는 합성음 그대로. */
+test('소리 파일을 넣으면 그 소리만 녹음으로 바뀐다', async () => {
+  const ctx = context(), audio = new GameAudio({ contextFactory: () => ctx });
+  await audio.unlock();
+  audio.pack.set('voice/shout', [{ duration: 0.8 }]);
+
+  audio.stop();
+  audio.scream(null, 'shout');
+  assert.equal(audio.sources.size, 1, '녹음은 한 겹이다 (합성은 네 겹)');
+
+  audio.stop();
+  audio.scream(null, 'death');
+  assert.equal(audio.sources.size, 4, '넣지 않은 소리는 합성 그대로여야 한다');
   audio.dispose();
 });
 

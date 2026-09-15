@@ -36,21 +36,32 @@ const WORK_SOUND_GAP = 420;   // 길게 누르는 작업의 소리 간격(ms)
 const HURT_VOICE_GAP = 320;   // 같은 사람의 비명이 겹치지 않게
 const SPEECH_RANGE = 16;      // 말소리가 들리는 거리(m)
 
-/* 대사. 입 밖으로 나가는 말이라 영어로 한다. 화면에는 띄우지 않는다. */
+/* 대사.
+ *
+ * 예전에는 영어로 적어 두고 lang 도 'en-US' 로 넘겼다. 한국어로 맞춰 둔
+ * 휴대폰에는 영어 목소리가 깔려 있지 않은 경우가 많고, 그러면 한국어 목소리가
+ * 영어 문장을 철자대로 읽어서 알아들을 수 없는 소리가 났다. 게임 자막이 전부
+ * 한국어이므로 대사도 한국어로 한다. 한국어 목소리가 없는 기기에서는 영어
+ * 문장으로 대신한다(BACKUP).
+ */
 const SHOUT_LINES = [
-  'Police! Drop the weapon!',          // 경찰이다! 무기 버려!
-  'Hands up! Get down now!',           // 손 들어! 엎드려!
-  'Surrender! You are surrounded!',    // 항복해! 포위됐다!
-  'Drop it! Last warning!',            // 버려! 마지막 경고다!
+  '경찰이다! 무기 버려!',
+  '손 들어! 당장 엎드려!',
+  '항복해! 포위됐다!',
+  '버려! 마지막 경고다!',
 ];
-const SURRENDER_LINES = [
-  'Okay, okay! I give up!',            // 알았어, 항복이다!
-  "Don't shoot! I'm done!",            // 쏘지 마! 그만할게!
-];
-const DEFY_LINES = [
-  "You'll have to come get me!",       // 올 테면 와 봐!
-  'Never! Take them down!',            // 어림없다! 쏴 버려!
-];
+const SURRENDER_LINES = ['알았어, 알았다고! 항복이야!', '쏘지 마! 그만할게!'];
+const DEFY_LINES = ['올 테면 와 봐!', '어림없다! 쏴 버려!'];
+const BACKUP_LINES = {
+  '경찰이다! 무기 버려!': 'Police! Drop the weapon!',
+  '손 들어! 당장 엎드려!': 'Hands up! Get down now!',
+  '항복해! 포위됐다!': 'Surrender! You are surrounded!',
+  '버려! 마지막 경고다!': 'Drop it! Last warning!',
+  '알았어, 알았다고! 항복이야!': 'Okay, okay! I give up!',
+  '쏘지 마! 그만할게!': "Don't shoot! I'm done!",
+  '올 테면 와 봐!': "You'll have to come get me!",
+  '어림없다! 쏴 버려!': 'Never! Take them down!',
+};
 const pickLine = (lines) => lines[Math.floor(Math.random() * lines.length)];
 
 export class Game {
@@ -945,8 +956,11 @@ export class Game {
   _shout(now) {
     if (now - (this._lastShoutAt || 0) < SHOUT_GAP) return;
     this._lastShoutAt = now;
-    this.audio?.scream(null, 'shout');
-    this.audio?.speak(pickLine(SHOUT_LINES), { rate: 1.15, pitch: 0.95 });
+    // 말이 나가면 그것으로 충분하다. 합성 고함까지 같이 내면 두 사람이 동시에
+    // 소리치는 것처럼 겹쳐 들린다. 말을 못 하는 기기에서만 고함을 낸다.
+    if (!this._say(pickLine(SHOUT_LINES), null, { rate: 1.15, pitch: 0.95 })) {
+      this.audio?.scream(null, 'shout');
+    }
     this.socket.emit('shout');
   }
 
@@ -962,17 +976,25 @@ export class Game {
   /**
    * 말 한마디. 가깝고 벽이 없을 때만 발음한다.
    * 화면에는 남기지 않는다 — 대사는 소리로만 듣는다.
+   *
+   * @returns 실제로 말했으면 true. 기기에 목소리가 없으면 false 를 돌려주므로
+   *          부르는 쪽이 합성 고함으로 대신할 수 있다.
    */
   _say(line, position, opts = {}) {
-    if (!line) return;
-    if (!position) { this.audio?.speak(line, opts); return; }
+    if (!line || !this.audio) return false;
+    // 한국어 목소리가 깔려 있지 않은 기기에서는 영어 문장으로 바꿔 읽는다.
+    const korean = this.audio.canSpeak('ko-KR');
+    const text = korean ? line : BACKUP_LINES[line];
+    if (!text) return false;
+    const speak = () => this.audio.speak(text, { lang: korean ? 'ko-KR' : 'en-US', ...opts });
+    if (!position) return speak();
     const distance = Math.hypot(
       position.x - this.camera.position.x, position.z - this.camera.position.z);
     const t = performance.now();
-    if (distance > SPEECH_RANGE || t - this._lastSpeech < 900) return;
-    if (this._occluded(position)) return;
+    if (distance > SPEECH_RANGE || t - this._lastSpeech < 900) return false;
+    if (this._occluded(position)) return false;
     this._lastSpeech = t;
-    this.audio?.speak(line, opts);
+    return speak();
   }
 
   /** 비명. 같은 사람이 연사에 맞을 때 소리가 겹치지 않게 간격을 둔다. */

@@ -13,6 +13,7 @@
     "swap:character": "node scripts/swap-character.mjs",
     "import:animations": "node scripts/import-animations.mjs",
     "audio:levels": "node scripts/audio-levels.mjs",
+    "import:audio": "node scripts/import-audio.mjs",
     "check:hud": "node scripts/hud-layout-check.mjs"
   },
   "dependencies": {

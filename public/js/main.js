@@ -120,10 +120,20 @@ function initSound(settings) {
       setSoundState('브라우저가 소리를 막고 있습니다. 화면을 한 번 더 누른 뒤 다시 시도해 주세요.', 'bad');
       return;
     }
-    setSoundState('총성 → 수갑 → 비명 순으로 들려야 합니다. 안 들리면 기기 음량과 탭 음소거를 확인하세요.', 'ok');
+    const spoken = audio.canSpeak('ko-KR');
+    setSoundState(
+      `총성 → 수갑 → 비명 → 구두 경고 순으로 들려야 합니다.${
+        spoken ? '' : ' (이 기기에는 한국어 음성이 없어 경고는 영어로 나갑니다.)'
+      } 안 들리면 기기 음량과 탭 음소거를 확인하세요.`, 'ok');
     audio.shot('rifle');
     setTimeout(() => audio.cuff(), 500);
     setTimeout(() => audio.scream(null, 'pain'), 1000);
+    setTimeout(() => {
+      if (!audio.speak(spoken ? '경찰이다! 무기 버려!' : 'Police! Drop the weapon!',
+        { lang: spoken ? 'ko-KR' : 'en-US', rate: 1.15, pitch: 0.95 })) {
+        audio.scream(null, 'shout');
+      }
+    }, 1600);
   });
 }
 

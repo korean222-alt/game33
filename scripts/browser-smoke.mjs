@@ -213,13 +213,32 @@ try {
     }
   }
   await untilDoor((id) => ['open', 'destroyed'].includes(window.__mr.doors.get(id).state), target);
-  const door = await page.evaluate((id) => {
+  /* 열린 문은 문간을 비워야 하지만, 젖혀진 문짝은 그 자리에 남아 총알을 막아야
+   * 한다. 예전에는 열린 문의 콜라이더를 통째로 없애서, 눈에 보이는 문짝을 쏘면
+   * 총알이 그대로 통과해 뒤쪽 벽에 박혔다. */
+  const door = await page.evaluate(async (id) => {
     const g = window.__mr;
-    return { blocking: g.doors.colliders().some(c => c.id === id),
-      visible: g.world.doorMeshes.get(id).pivot.visible, state: g.doors.get(id).state };
+    const { hasLineOfSight } = await import('/js/map-data.js');
+    const colliders = g.doors.colliders();
+    const d = g.doors.get(id);
+    const leaf = colliders.find(c => c.id === id && c.kind === 'doorLeaf');
+    // 문짝 한복판을 가로지르는 선 (열린 문짝을 쏘는 것과 같다)
+    const shot = leaf && (d.axis === 'x'
+      ? !hasLineOfSight(leaf.x - 2, leaf.z, leaf.x + 2, leaf.z, 1.2, colliders)
+      : !hasLineOfSight(leaf.x, leaf.z - 2, leaf.x, leaf.z + 2, 1.2, colliders));
+    return {
+      doorway: colliders.some(c => c.id === id && c.kind === 'door'),
+      leafStops: !!shot,
+      through: hasLineOfSight(
+        d.axis === 'x' ? d.x - 1.6 : d.x, d.axis === 'x' ? d.z : d.z - 1.6,
+        d.axis === 'x' ? d.x + 1.6 : d.x, d.axis === 'x' ? d.z : d.z + 1.6, 1.2, colliders),
+      visible: g.world.doorMeshes.get(id).pivot.visible, state: g.doors.get(id).state,
+    };
   }, target);
-  assert.equal(door.blocking, false);
+  assert.equal(door.doorway, false, '열린 문인데 문간이 아직 막혀 있다');
+  assert.equal(door.through, true, '열린 문간으로 지나갈 수 없다');
   if (door.state === 'destroyed') assert.equal(door.visible, false);
+  else assert.equal(door.leafStops, true, '젖혀진 문짝을 총알이 통과한다');
 
   await page.evaluate(() => {
     const g = window.__mr;
