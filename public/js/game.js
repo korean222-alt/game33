@@ -829,11 +829,16 @@ export class Game {
     if (this.peek && (!input.peek || !available.peek || this.peek.doorId !== door.id)) {
       this._endPeek();
     }
-    const key = (k, label) => (isTouchDevice ? label : `${k} ${label}`);
-    const hint = busy ? '작업 중…'
-      : [primary ? key(PRIMARY_KEY[primary], PRIMARY_HINT[primary]) : null,
-        available.peek ? key('Q', '문틈으로 보기(조용)') : null,
-        available.kick ? key('B', DOOR_KICK_HINT(door.state)) : null]
+    /* 안내 문구.
+     *
+     * 터치 기기에는 적지 않는다. 할 수 있는 동작마다 이름이 적힌 버튼이 바로
+     * 아래에 떠 있으므로 같은 말을 두 번 하는 셈이고, 세 줄짜리 설명이 화면
+     * 아래쪽을 덮어 버튼과 겹쳤다. 키보드에서는 어느 키인지 알 길이 없으니
+     * 그대로 둔다. */
+    const hint = busy ? '작업 중…' : isTouchDevice ? ''
+      : [primary ? `${PRIMARY_KEY[primary]} ${PRIMARY_HINT[primary]}` : null,
+        available.peek ? 'Q 문틈으로 보기(조용)' : null,
+        available.kick ? `B ${DOOR_KICK_HINT(door.state)}` : null]
         .filter(Boolean).join('\n');
     this.hud.setDoor(door, hint, available);
 

@@ -12,7 +12,8 @@
     "test": "node --test tests/*.test.mjs",
     "swap:character": "node scripts/swap-character.mjs",
     "import:animations": "node scripts/import-animations.mjs",
-    "audio:levels": "node scripts/audio-levels.mjs"
+    "audio:levels": "node scripts/audio-levels.mjs",
+    "check:hud": "node scripts/hud-layout-check.mjs"
   },
   "dependencies": {
     "express": "^4.19.2",

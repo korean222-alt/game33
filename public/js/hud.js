@@ -25,6 +25,7 @@ export class Hud {
       defuse: $('defuse'), defuseTxt: $('defuseTxt'), defuseFill: $('defuseFill'),
       crosshair: $('crosshair'), killfeed: $('killfeed'), fps: $('fps'),
       bUse: $('bUse'), bDoor: $('bDoor'), bKick: $('bKick'), bPeek: $('bPeek'),
+      btnRows: $('btnRows'), contextCluster: $('contextCluster'),
       phaseName: $('phaseName'), phaseTitle: $('phaseTitle'), objectives: $('objectives'),
       door: $('door'), doorTxt: $('doorTxt'), doorActions: $('doorActions'),
       nade: $('nade'), nadeName: $('nadeName'), nadeCount: $('nadeCount'),
@@ -35,6 +36,37 @@ export class Hud {
     this._hitTimer = null;
     this._radioTimer = null;
     this._threatMarks = [];
+    this._watchButtonRows();
+  }
+
+  /**
+   * 아래쪽 버튼 줄이 차지하는 높이를 재서 --touch-h 에 넣는다.
+   *
+   * 안내 상자(무전 · 문 · 해체)는 그 값 바로 위에서 시작한다. 버튼이 한 줄일
+   * 때와 두 줄일 때 높이가 달라지므로, 숫자를 코드에 적어 두면 언젠가 반드시
+   * 어긋나서 안내 글이 버튼에 가린다. 실제 높이를 재는 편이 안전하다.
+   */
+  _watchButtonRows() {
+    const rows = this.el.btnRows;
+    const top = document.querySelector('.hudTop');
+    if (!rows) return;
+    const apply = () => {
+      const visible = this.el.touch && !this.el.touch.classList.contains('hidden');
+      const height = visible ? rows.getBoundingClientRect().height : 0;
+      const style = document.documentElement.style;
+      style.setProperty('--touch-h', `${Math.round(height)}px`);
+      // 세로로 세운 화면에서는 무전 상자를 시계·목표 패널 "아래" 에 놓는다.
+      // 좌우로 피할 폭이 없기 때문이다. 그 높이도 여기서 같이 잰다.
+      if (top) style.setProperty('--top-h', `${Math.round(top.getBoundingClientRect().height)}px`);
+    };
+    this._syncButtonRows = apply;
+    if (typeof ResizeObserver === 'function') {
+      this._rowObserver = new ResizeObserver(apply);
+      this._rowObserver.observe(rows);
+      if (top) this._rowObserver.observe(top);
+    }
+    addEventListener('resize', apply);
+    apply();
   }
 
   /**
@@ -83,6 +115,18 @@ export class Hud {
   showTouch(on) {
     this.el.touch.classList.toggle('hidden', !on);
     this.el.touch.classList.toggle('on', on);
+    // 터치일 때만 좌우 조작부 자리를 비워 둔다 (PC 는 화면 전체를 쓴다).
+    document.documentElement.classList.toggle('touch', !!on);
+    this._syncButtonRows?.();
+  }
+
+  /** 위줄에 보이는 버튼이 하나도 없으면 줄 자체를 접는다. */
+  _syncContextRow() {
+    const row = this.el.contextCluster;
+    if (!row) return;
+    const any = [...row.children].some((b) => !b.classList.contains('hidden'));
+    row.classList.toggle('empty', !any);
+    this._syncButtonRows?.();
   }
 
   /* ---- 매치 시작 시 목표 목록 만들기 ------------------------------------ */
@@ -228,6 +272,7 @@ export class Hud {
   setDefuse(visible, label = '', progress = 0) {
     this.el.defuse.classList.toggle('hidden', !visible);
     this.el.bUse?.classList.toggle('hidden', !visible);
+    this._syncContextRow();
     if (!visible) return;
     this.el.defuseTxt.textContent = label;
     this.el.defuseFill.style.width = `${Math.round(progress * 100)}%`;
@@ -252,6 +297,7 @@ export class Hud {
     this.el.bDoor?.classList.toggle('hidden', !show || !primary);
     this.el.bKick?.classList.toggle('hidden', !show || !kick);
     this.el.bPeek?.classList.toggle('hidden', !show || !peek);
+    this._syncContextRow();
     if (!show) return;
     if (primary && this.el.bDoor) this.el.bDoor.textContent = DOOR_ACTION_LABEL[primary] || '문';
     this.el.doorTxt.textContent = `문 · ${DOOR_LABEL[door.state] || door.state}`;
