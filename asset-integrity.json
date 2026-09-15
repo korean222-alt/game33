@@ -1,27 +1,19 @@
 {
-  "public/assets/models/stall-tarp.glb": {
-    "bytes": 13904,
-    "sha256": "43dea18fdb9c41ecad1e768c5d32ef070fe52f459e3faba8329ece6627924eea"
-  },
-  "public/assets/models/stall-wood.glb": {
-    "bytes": 4764964,
-    "sha256": "584f8bb9da0070ac467a31487380d33ad98d1ecea3826214f2c0ac86d716a4d4"
-  },
   "public/assets/models/crate.glb": {
     "bytes": 9980,
     "sha256": "5f765509f0bf9db466f64add750ecfd78f6a1d9b65073d76ac3df94fde29ce24"
   },
   "public/assets/models/barrel.glb": {
-    "bytes": 579780,
-    "sha256": "22e4a18c5c8227ed44a7bc14850326daaeb437fa89bc9963091d24d63428a4ca"
+    "bytes": 120556,
+    "sha256": "986e2e876028717a4bdfc8f4218a7395ea2b81d4d275eb1bdf9f91cdc66ed1bd"
   },
   "public/assets/models/vase.glb": {
     "bytes": 11140,
     "sha256": "85e1fd2b533fc10de57a2c49b2e8916c88ea1f4518cecd33f9fa48f68da26589"
   },
   "public/assets/models/well.glb": {
-    "bytes": 435860,
-    "sha256": "0a0ec9793a08f5f4973d5abe2bd19cc50c764de7dcb685609a9ce8a523abd881"
+    "bytes": 119892,
+    "sha256": "14f685858570b89e8f361c3ecc911887a518131ead3bd75d1a9fe4c41842b26b"
   },
   "public/assets/models/character-animated.glb": {
     "bytes": 2001792,

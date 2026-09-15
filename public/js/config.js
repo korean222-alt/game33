@@ -16,10 +16,17 @@
  * -------------------------------------------------------------------------- */
 export const MODELS = {
   // --- 맵 소품 ---
-  stallTarp:  { url: '/assets/models/stall-tarp.glb',  scale: 1, rotY: 0, fit: { size: [2.83, 1.84, 2.23] },
-                placeholder: { type: 'stall', w: 2.83, h: 1.84, d: 2.23, color: 0x6b5c45 } },
-  stallWood:  { url: '/assets/models/stall-wood.glb',  scale: 1, rotY: 0, fit: { size: [5.0, 1.95 / 0.72, 2.05 / 0.72] },
-                placeholder: { type: 'stall', w: 5.13, h: 2.73, d: 2.86, color: 0x7a6647 } },
+  //
+  //  시장 매대 둘(stallTarp / stallWood)은 여기서 뺐다. 맵이 저택으로 바뀐 뒤
+  //  map-data.js 가 배치하는 소품은 vase · barrel · well · crate 넷뿐인데,
+  //  assets.js 는 여기 적힌 필수 모델을 전부 미리 받는다. 그래서 아무도 보지
+  //  못하는 매대 4.78MB 를 모든 접속자가 내려받고 있었다. 파일은 저장소에
+  //  그대로 두었으니, 시장 맵을 되살릴 때 아래 두 줄을 다시 켜면 된다.
+  //
+  //  stallTarp: { url: '/assets/models/stall-tarp.glb', scale: 1, rotY: 0, fit: { size: [2.83, 1.84, 2.23] },
+  //               placeholder: { type: 'stall', w: 2.83, h: 1.84, d: 2.23, color: 0x6b5c45 } },
+  //  stallWood: { url: '/assets/models/stall-wood.glb', scale: 1, rotY: 0, fit: { size: [5.0, 1.95 / 0.72, 2.05 / 0.72] },
+  //               placeholder: { type: 'stall', w: 5.13, h: 2.73, d: 2.86, color: 0x7a6647 } },
   crate:      { url: '/assets/models/crate.glb',       scale: 1, rotY: 0, fit: { size: [.75,.75,.75] },
                 placeholder: { type: 'box', w: 0.75, h: 0.75, d: 0.75, color: 0x8a6b3f } },
   barrel:     { url: '/assets/models/barrel.glb',      scale: 1, rotY: 0, fit: { size: [.75,.99,.75] },
