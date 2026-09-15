@@ -13,8 +13,13 @@ let socket = null;
 
 const IO_OPTS = {
   transports: ['websocket', 'polling'],
-  reconnectionAttempts: 5,
-  timeout: 12000,
+  // Render 무료 인스턴스 슬립(50초+)과 모바일 망 끊김을 버티도록 넉넉히
+  reconnection: true,
+  reconnectionAttempts: 25,
+  reconnectionDelay: 1500,
+  reconnectionDelayMax: 8000,
+  timeout: 25000,
+  randomizationFactor: 0.4,
 };
 
 /** <script> 를 동적으로 하나 삽입하고 로드될 때까지 기다린다. */
@@ -50,7 +55,7 @@ export async function connect() {
       cleanup();
       socket.disconnect();
       reject(new Error(
-        `게임 서버에 연결하지 못했습니다.\n${SERVER_URL || '(같은 주소)'}\n${err?.message || ''}`,
+        `게임 서버에 연결하지 못했습니다.\n${SERVER_URL || '(같은 주소)'}\n${err?.message || ''}\n(무료 서버가 잠들어 있으면 1분 정도 걸릴 수 있습니다)`,
       ));
     };
     const cleanup = () => {
@@ -65,7 +70,7 @@ export async function connect() {
   // inside the house and have no door event, even when the new frontend loads.
   try {
     await new Promise((resolve, reject) => {
-      socket.timeout(8000).emit('protocol', {}, (error, reply) => {
+      socket.timeout(12000).emit('protocol', {}, (error, reply) => {
         if (error || reply?.protocol !== GAME_PROTOCOL) reject(new Error(UPDATE_MESSAGE));
         else resolve();
       });
