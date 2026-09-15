@@ -128,10 +128,8 @@ test('저택이 정전되면 실내 밝기가 야외등만 남는다', () => {
   assert.ok(lampsOnly < all * 0.5, `정전: ${lampsOnly} vs 평시: ${all}`);
 });
 
-test('2단계에 들어가면 저택 전기가 끊긴다', () => {
-  const sweep = PHASES.find((p) => p.id === 'sweep');
-  assert.equal(sweep.cutPower, true, '수색 단계 진입이 정전 시점이다');
-  assert.equal(PHASES.filter((p) => p.cutPower).length, 1, '정전은 한 번만 일어난다');
+test('단계 전환은 복구된 전기를 다시 끊지 않는다', () => {
+  assert.equal(PHASES.filter((p) => p.cutPower).length, 0, '정전은 최초 진입 타이머가 처리한다');
   assert.ok(MISSION.powerCut.length > 0, '정전 무전이 있다');
 });
 
@@ -406,3 +404,4 @@ test('경고로 쌓인 압박은 사기를 깎고, 시간이 지나면 풀린다
   advance(npc, world, WARNING.cooldown / 1000 + 8);
   assert.ok(npc.pressure < pressured * 0.35, `시간이 지나면 풀린다: ${npc.pressure}`);
 });
+

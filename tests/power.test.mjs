@@ -1,0 +1,54 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { resetPower, powerCutDue, restorePower, POWER_CUT_DELAY_MS } from '../public/js/power-state.js';
+import { Room, tickRoom, updateInteractions } from '../server.js';
+import { BACKUP_GENERATOR as GEN } from '../public/js/map-data.js';
+
+test('entry arms a 5-second blackout even in phase 1 with surviving perimeter guards', () => {
+  const room = { phase: 0, standingPlayers: [{x:0,z:32}], suspects:[{alive:true,origin:'outdoor'}] };
+  resetPower(room);
+  assert.equal(powerCutDue(room, 10000), false);
+  assert.equal(room.powerCutAt, null);
+  room.standingPlayers[0].z = 24;
+  assert.equal(powerCutDue(room, 20000), false);
+  assert.equal(room.powerCutAt, 20000 + POWER_CUT_DELAY_MS);
+  room.standingPlayers[0].z = 32;
+  assert.equal(powerCutDue(room, 24999), false);
+  assert.equal(powerCutDue(room, 25000), true);
+  room.power = false;
+  assert.equal(restorePower(room), true);
+  for (room.phase of [0,1,2,3,4]) assert.equal(powerCutDue(room, 50000), false);
+  assert.equal(restorePower(room), false);
+  resetPower(room);
+  assert.equal(room.power, true); assert.equal(room.generatorStarted, false);
+  assert.equal(room.powerCutAt, null);
+});
+
+test('server broadcasts outage, hold-to-restore, and persistent generator snapshot', () => {
+  const room = new Room('TEST');
+  const player = room.addPlayer({id:'one'}, 'one', 'rifle');
+  const events=[]; const io={to:()=>({emit:(name,data)=>events.push({name,data})})};
+  room.state='active'; room.endsAt=Date.now()+60000; room.powerCutAt=Date.now()-1;
+  tickRoom(room,io);
+  assert.equal(room.power,false);
+  assert.equal(events.filter(e=>e.name==='power' && !e.data.on).length,1);
+  Object.assign(player,{x:GEN.x,z:GEN.z+1.2,holdingUse:true});
+  updateInteractions(room,1,io);
+  assert.match(player.interactLabel,/예비 발전기/);
+  assert.ok(player.interactProgress>0);
+  player.holdingUse=false; updateInteractions(room,.1,io);
+  assert.equal(player.interactProgress,0); assert.equal(room.power,false);
+  player.holdingUse=true; player.downed=true; updateInteractions(room,4,io);
+  assert.equal(room.power,false);
+  player.downed=false; player.x=0; updateInteractions(room,4,io);
+  assert.equal(room.power,false);
+  player.x=GEN.x; updateInteractions(room,GEN.seconds,io);
+  assert.equal(room.power,true); assert.equal(room.generatorStarted,true);
+  updateInteractions(room,4,io);
+  assert.equal(events.filter(e=>e.name==='power' && e.data.on).length,1);
+  tickRoom(room,io);
+  const snapshot=events.filter(e=>e.name==='snapshot').at(-1).data;
+  assert.equal(snapshot.power,1); assert.equal(snapshot.generatorStarted,true);
+  room.resetMission();
+  assert.equal(room.generatorStarted,false); assert.equal(room.power,true);
+});

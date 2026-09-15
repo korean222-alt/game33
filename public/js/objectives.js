@@ -87,6 +87,8 @@ export function objectiveState(room, id) {
         detail: whereLeft(left),
       };
     }
+    case 'generator':
+      return { done: !!room.generatorStarted, have: room.generatorStarted ? 1 : 0, need: 1, detail: '북동쪽 작업실 · 가까이서 E / 사용 길게 누르기' };
     case 'quiet':
       return { done: room.stats.civiliansLost === 0 && !room.stats.hostageLost, have: 0, need: 0 };
     case 'arrests':
@@ -104,7 +106,7 @@ export function objectiveReport(room) {
     name: phase.name,
     title: phase.title,
     hint: phase.hint,
-    list: phase.show.map((id) => {
+    list: [...phase.show, ...(room.powerCutDone ? ['generator'] : [])].map((id) => {
       const state = objectiveState(room, id);
       const done = state.done || room.objectiveDone.has(id);
       return {
@@ -134,3 +136,4 @@ export function missedObjectives(room) {
   }
   return missed + room.evidence.filter((e) => !e.taken).length;
 }
+

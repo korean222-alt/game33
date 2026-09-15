@@ -139,7 +139,8 @@ export class VisualPipeline {
   setQuality(key) { this.enabled = key === 'high' || key === 'ultra'; this.resize(); }
   resize() {
     this.composer.setPixelRatio(this.renderer.getPixelRatio());
-    this.composer.setSize(innerWidth, innerHeight);
+    const size = this.renderer.getSize(new THREE.Vector2());
+    this.composer.setSize(size.x, size.y);
   }
   render() {
     const { renderer, scene, camera } = this;
@@ -156,3 +157,4 @@ export class VisualPipeline {
     renderer.shadowMap.autoUpdate = shadowUpdate;
   }
 }
+

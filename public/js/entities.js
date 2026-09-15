@@ -10,6 +10,7 @@
  * ========================================================================== */
 
 import * as THREE from 'three';
+import { WristRestraints } from './restraints.js';
 import { NET } from './config.js';
 import { makePlaceholder } from './assets.js';
 import { CharacterRig } from './character-animation.js';
@@ -139,6 +140,7 @@ class Avatar {
     this.body = body;
     this.rig = new CharacterRig(body, body.userData.isPlaceholder ? [] : assets.animations(modelKey));
     this.gear = attachGear(body, GEAR[kind] || GEAR.suspect);
+    this.restraints = new WristRestraints(this.group, this.rig);
 
     if (armed) {
       this.weapon = assets.instance(weapon);
@@ -190,6 +192,7 @@ class Avatar {
       crouch: !!s.crouch || surrendered,
       aiming: this.kind !== 'civilian' && !surrendered && s.state === 'engage',
       hands: surrendered,
+      cuffed: !!s.cuffed,
       dead: !visible || !!s.downed,
     });
     if (this.weapon) {
@@ -197,6 +200,7 @@ class Avatar {
       if (this.weapon.visible) this.rig.alignWeapon(this.weapon, this.group, this.gripOffset, dt);
     }
     for (const piece of this.gear) piece.visible = visible;
+    this.restraints.update(!!s.cuffed && visible && !s.downed);
 
     // 사망/쓰러짐은 모델을 지우지 않고 사망 동작으로 남긴다.
     this.group.visible = visible || this.rig.dead;
@@ -207,6 +211,7 @@ class Avatar {
   dispose() {
     this.scene.remove(this.group);
     this.rig.dispose();
+    this.restraints.dispose();
     // 지오메트리와 텍스처는 AssetManager 소유이고 모든 아바타가 공유한다.
     // 여기서 해제할 것은 복제한 재질과 이름표 텍스처뿐이다.
     this.body.traverse((o) => {
@@ -250,7 +255,12 @@ function attachGear(body, spec) {
     if (!target) return;
     const mesh = new THREE.Mesh(geometry, material);
     mesh.scale.setScalar(1 / scaleOf(target));
-    mesh.position.copy(target.worldToLocal(local.clone()));
+    const position = local.clone();
+    if (boneName === 'mixamorigSpine2') {
+      position.copy(target.getWorldPosition(new THREE.Vector3()));
+      position.add(new THREE.Vector3(local.x, local.y - 1.33, local.z));
+    }
+    mesh.position.copy(target.worldToLocal(position));
     // 뼈마다 로컬 축 규약이 다르다. 뼈의 월드 회전을 상쇄해 두면 장구류는
     // 항상 아바타 기준(+Y 위, -Z 정면)으로 놓인다.
     mesh.quaternion.copy(target.getWorldQuaternion(new THREE.Quaternion()).invert());
@@ -262,7 +272,7 @@ function attachGear(body, spec) {
 
   if (spec.carrier) {
     put('mixamorigSpine2',
-      new THREE.BoxGeometry(0.40, 0.44, 0.26),
+      new THREE.BoxGeometry(0.34, 0.30, 0.20),
       new THREE.MeshStandardMaterial({ color: spec.carrier, roughness: 0.92, metalness: 0.05 }),
       new THREE.Vector3(0, 1.33, 0.01));
     // 탄창 파우치 - 가슴 앞 가로줄
@@ -613,3 +623,4 @@ class Effects {
     this.blasts.length = 0;
   }
 }
+

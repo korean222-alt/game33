@@ -15,6 +15,7 @@ import { PredictionHistory } from './prediction-history.js';
 import { createWeaponOptic, disposeOptic } from './weapon-optic.js';
 import { sightPosition } from './viewmodel-layout.js';
 import { reloadPose } from './reload-motion.js';
+import { ViewmodelHands } from './viewmodel-hands.js';
 
 export class LocalPlayer {
   /**
@@ -80,6 +81,9 @@ export class LocalPlayer {
 
   setWeapon(key) {
     this.weapon = key;
+    this.cancelReload();
+    this._hands?.dispose();
+    this._hands = null;
     disposeOptic(this._optic);
     this._optic = null;
     // 이전 뷰모델 정리
@@ -90,6 +94,7 @@ export class LocalPlayer {
       this.viewmodel = null;
       return;
     }
+    this._hands = new ViewmodelHands(this.viewmodel, key);
     const { optic, anchor } = createWeaponOptic(this.viewmodel, key);
     this._optic = optic;
     this._sightAnchor = anchor;
@@ -250,6 +255,7 @@ export class LocalPlayer {
 
   cancelReload() {
     this._reload = { t: 0, duration: 0 };
+    this._hands?.update(0);
   }
 
   get reloadProgress() {
@@ -281,6 +287,7 @@ export class LocalPlayer {
     // 재장전 동작은 조준 자세보다 우선한다. 탄창을 가는 동안에는 조준선이
     // 흐트러지는 게 맞고, 그래야 "지금 쏠 수 없다"가 눈으로 보인다.
     const rl = reloadPose(this.reloadProgress);
+    this._hands?.update(this.reloadProgress);
 
     this.viewmodel.position.set(
       lerp(p[0], ap[0], a) + sway + rl.pos[0],
@@ -372,3 +379,4 @@ export class LocalPlayer {
 const lerp = (a, b, k) => a + (b - a) * k;
 /** 문틈을 보는 동안 쓰는 "입력 없음". 입력 객체를 건드리지 않기 위해 따로 둔다. */
 const FROZEN_MOVE = Object.freeze({ x: 0, y: 0 });
+

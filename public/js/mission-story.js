@@ -16,6 +16,7 @@ export const OBJECTIVES = {
   suspects: { label: '저택 내 무장 인원 정리', kind: 'primary' },
   extract: { label: '전원 정문으로 철수', kind: 'primary' },
   evidence: { label: '증거 회수', kind: 'bonus' },
+  generator: { label: '예비 발전기 가동', kind: 'bonus' },
   quiet: { label: '민간인 피해 0명', kind: 'bonus' },
   arrests: { label: '체포 우선 처리', kind: 'bonus' },
 };
@@ -34,13 +35,11 @@ export const PHASES = [
     id: 'sweep',
     name: '2단계 · 수색',
     title: '어둠 속의 방들',
-    hint: '저쪽에서 전기를 내렸다. L 로 손전등을 켤 수 있지만, 켠 불빛은 상대도 본다.',
+    hint: '정전되면 손전등으로 수색하고, 북동쪽 작업실의 예비 발전기로 전력을 복구할 수 있다.',
     require: ['civilians', 'devices'],
     show: ['civilians', 'devices', 'evidence', 'quiet'],
     radio: '지휘부: 안쪽은 방이 많다. 문틈으로 먼저 확인해라. 민간인이 섞여 있다.',
-    /* 저택 안으로 들어선 순간 저쪽이 두꺼비집을 내린다. 이 단계부터 실내는
-     * 캄캄하다 (server.js 의 cutPower). */
-    cutPower: true,
+    // 정전은 서버의 최초 진입 후 5초 타이머가 처리한다.
   },
   {
     id: 'hvt',
@@ -115,7 +114,8 @@ export const MISSION = {
   hvtFound: '지휘부: 주요 용의자 확인. 인질 상태 우선 보고해라.',
   hvtDown: '지휘부: 주요 용의자 무력화. 인질 상태 확인해라.',
   reinforcements: '지휘부: 경고. 외부 차량 두 대가 정문으로 들어왔다. 무장 인원이 내리고 있다.',
-  powerCut: '지휘부: 저택 전력이 끊겼다. 저쪽에서 내린 거다. 손전등을 켜되, 불빛은 상대도 본다는 걸 잊지 마라.',
+  powerCut: '지휘부: 전력이 끊겼다. 손전등으로 북동쪽 작업실의 예비 발전기를 찾아 차단기를 올려라.',
+  powerRestored: '지휘부: 예비 발전기 가동 확인. 저택 전력이 복구됐다.',
   won: '문을 하나씩 열어 확인하는 동안 밤이 다 갔다. 저택 안에 있던 사람들은 담장 밖으로 나왔고, 소각되기 직전의 기록도 함께 나왔다. 장부에 적힌 이름들은 이 저택보다 훨씬 넓은 곳까지 이어져 있었다. 오늘 밤의 일은 그 첫 장에 지나지 않는다.',
   lost: '작전은 중단됐다. 지휘부는 구역을 다시 봉쇄하고 열화상 기록을 다시 돌려 본다. 무엇을 놓쳤는지는 기록에 남는다. 대기실에서 장비와 진입 순서를 다시 정하라.',
 };
@@ -123,3 +123,4 @@ export const MISSION = {
 /** 단계 id -> 인덱스 */
 export const phaseIndex = (id) => Math.max(0, PHASES.findIndex((p) => p.id === id));
 export const phaseOf = (id) => PHASES[phaseIndex(id)];
+

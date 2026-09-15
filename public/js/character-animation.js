@@ -11,6 +11,7 @@
  * ========================================================================== */
 
 import * as THREE from 'three';
+import { placeWrist } from './restraints.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 /* 두 손 사이가 이 범위를 벗어나면 총을 잡은 자세가 아니다(달리기/포복/사망 클립). */
@@ -167,9 +168,21 @@ export class CharacterRig {
     this.mixer.update(dt);
 
     // 항복 자세: 클립이 없으므로 어깨/팔꿈치만 들어 올린다.
-    const wantHands = state.hands ? 1 : 0;
+    const wantHands = state.hands && !state.cuffed ? 1 : 0;
     this.handsUp += (wantHands - this.handsUp) * Math.min(1, dt * 6);
-    if (this.handsUp > 0.01) this._raiseHands(this.handsUp);
+    if (this.handsUp > 0.01 && !state.dead) this._raiseHands(this.handsUp);
+    this.cuffedAmount = THREE.MathUtils.damp(this.cuffedAmount || 0, state.cuffed && !state.dead ? 1 : 0, 10, dt);
+    if (this.cuffedAmount > .01 && !state.dead) {
+      const frame = this.root.parent || this.root;
+      const chest = this.bones.spine?.getWorldPosition(new THREE.Vector3());
+      if (chest) {
+        frame.worldToLocal(chest);
+        for (const [side, sign] of [['left', 1], ['right', -1]]) {
+          const target = frame.localToWorld(new THREE.Vector3(sign * .085, chest.y - .22, chest.z - .34));
+          placeWrist(this.bones[side + 'Arm'], this.bones[side + 'ForeArm'], this.bones[side + 'Hand'], target, this.cuffedAmount);
+        }
+      }
+    }
   }
 
   _chooseBase(state) {
@@ -292,3 +305,4 @@ export class CharacterRig {
     this.mixer.uncacheRoot(this.root);
   }
 }
+

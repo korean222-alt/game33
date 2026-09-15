@@ -39,6 +39,9 @@
     overscroll-behavior:none; touch-action:none; }
   canvas { display:block; width:100%; height:100%; }
   #app { position:fixed; inset:0; }
+  #app, #hud, #touch, .screen {
+    top:var(--view-top, 0px); bottom:auto; height:var(--view-h, 100dvh);
+  }
   .hidden { display:none !important; }
 
   /* ---------- 공통 화면 ---------- */
@@ -162,10 +165,8 @@
   #bottomStack { position:absolute; left:50%; transform:translateX(-50%);
     bottom:calc(var(--ctl) + var(--safe-b) + var(--hudBotH)); width:min(640px, 92vw);
     display:flex; flex-direction:column-reverse; align-items:center; gap:7px; z-index:3;
-    /* 위쪽 116px 은 시간 표시와 무전 자리로 비워 둔다. 자리가 모자라면
-       column-reverse 라서 맨 위(자막)부터 잘린다 - 문 안내는 끝까지 남는다. */
-    max-height:calc(100dvh - var(--ctl) - var(--safe-b) - var(--hudBotH) - 116px);
-    overflow:hidden; }
+    /* 상호작용 중 무전을 보류하므로 자막을 잘라 공간을 만들 필요가 없다. */
+    overflow:visible; }
   #bottomStack > * { max-width:100%; flex:none; }
   #defuse { text-align:center; background:rgba(10,9,6,.8); border:1px solid var(--line);
     border-radius:9px; padding:9px 16px; min-width:184px; }
@@ -338,6 +339,7 @@
   #hitMarker.active { opacity:1; }
   .hudTop { position:relative; z-index:2; } .hudBot { z-index:2; }
   #crosshair { z-index:4; }
+  #hud, #touch, .screen { top:var(--view-top, 0px); bottom:auto; height:var(--view-h, 100dvh); }
   @media(max-height:620px) { #briefing { align-items:flex-start; } .brief-page { min-height:0; } #briefBody { font-size:15px; } }
 </style>
 </head>
@@ -576,3 +578,4 @@
 <script type="module" src="/js/main.js"></script>
 </body>
 </html>
+
