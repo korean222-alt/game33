@@ -222,7 +222,54 @@ function wireLobbyEvents() {
   });
   state.socket.on('matchStart', () => { state.briefing = null; });
 
-  state.socket.on('disconnect', () => {
+  state.socket.on('disconnect', (reason) => {
+    console.warn('[net] disconnect', reason);
+    // 작전 중이면 바로 메뉴로 보내지 않고 재연결을 시도한다.
+    const hadLobby = state.lobby?.code;
+    const inMatch = !!state.game && state.hud.screen !== 'menu' && state.hud.screen !== 'lobby';
+    if (inMatch && hadLobby) {
+      setMenuErr('');
+      state.hud.banner('연결이 끊겼습니다. 재접속 중… (같은 이름·방 코드로 90초 안에 돌아오면 이어집니다)', 8000);
+      // 소켓이 자동 재연결되면 joinRoom으로 슬롯을 이어받는다
+      const tryRejoin = async () => {
+        try {
+          if (!state.socket) state.socket = await connect();
+          if (!state.socket.connected) {
+            await new Promise((res, rej) => {
+              const t = setTimeout(() => rej(new Error('timeout')), 30000);
+              state.socket.once('connect', () => { clearTimeout(t); res(); });
+              state.socket.once('connect_error', (e) => { clearTimeout(t); rej(e); });
+            });
+          }
+          wireLobbyEvents();
+          const res = await new Promise((resolve) => {
+            state.socket.timeout(15000).emit('joinRoom', {
+              code: hadLobby, name: playerName(), weapon: state.weapon,
+            }, (err, response) => resolve(err ? { ok: false, error: '응답 지연' } : response));
+          });
+          if (res?.ok) {
+            state.myId = res.you;
+            if (state.game) state.game.myId = state.myId;
+            applyLobby(res.lobby);
+            state.hud.banner('재접속 완료', 2500);
+            return;
+          }
+          setMenuErr(res?.error || '재접속에 실패했습니다. 메뉴에서 같은 방 코드로 다시 참가해 주세요.');
+        } catch (e) {
+          console.error(e);
+          setMenuErr('서버 재연결에 실패했습니다. 잠시 후 같은 방 코드로 다시 참가해 주세요.');
+        }
+        state.game?.dispose();
+        state.game = null;
+        state.ready = false;
+        state.briefing = null;
+        state.hud.showTouch(false);
+        state.hud.show('menu');
+      };
+      // 약간의 딜레이 후 재시도 (Render 슬립 웨이크 시간 고려)
+      setTimeout(tryRejoin, 2000);
+      return;
+    }
     state.game?.dispose();
     state.game = null;
     state.socket?.disconnect();
@@ -376,4 +423,3 @@ function boot() {
 }
 
 boot();
-
