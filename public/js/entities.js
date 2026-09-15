@@ -94,6 +94,14 @@ function shortestAngle(from, to) {
   return d;
 }
 
+/* 수갑 사슬을 놓을 때 쓰는 작업용 값. 매 프레임 새로 만들지 않는다. */
+const CUFF_A = new THREE.Vector3();
+const CUFF_B = new THREE.Vector3();
+const CUFF_DIR = new THREE.Vector3();
+const CUFF_UP = new THREE.Vector3(0, 1, 0);
+const CUFF_Q = new THREE.Quaternion();
+const CUFF_Q2 = new THREE.Quaternion();
+
 /* ========================================================================== *
  *  캐릭터 아바타 하나
  * ========================================================================== */
@@ -139,6 +147,7 @@ class Avatar {
     this.body = body;
     this.rig = new CharacterRig(body, body.userData.isPlaceholder ? [] : assets.animations(modelKey));
     this.gear = attachGear(body, GEAR[kind] || GEAR.suspect);
+    this.cuffs = attachCuffs(body, this.group);
 
     if (armed) {
       this.weapon = assets.instance(weapon);
@@ -182,7 +191,8 @@ class Avatar {
     const visible = alive && !this.confirmedDead && this.latestHp > 0;
     this.alive = alive;
 
-    const surrendered = !!s.hands || !!s.cuffed || s.state === 'surrender';
+    const cuffed = !!s.cuffed;
+    const surrendered = !!s.hands || cuffed || s.state === 'surrender';
     this.rig.update(dt, {
       speed: this.speed,
       forward: this.forward,
@@ -190,6 +200,7 @@ class Avatar {
       crouch: !!s.crouch || surrendered,
       aiming: this.kind !== 'civilian' && !surrendered && s.state === 'engage',
       hands: surrendered,
+      cuffed,
       dead: !visible || !!s.downed,
     });
     if (this.weapon) {
@@ -197,11 +208,28 @@ class Avatar {
       if (this.weapon.visible) this.rig.alignWeapon(this.weapon, this.group, this.gripOffset, dt);
     }
     for (const piece of this.gear) piece.visible = visible;
+    this._updateCuffs(cuffed && visible);
 
     // 사망/쓰러짐은 모델을 지우지 않고 사망 동작으로 남긴다.
     this.group.visible = visible || this.rig.dead;
     this.nameTag.visible = visible;
     if (this.nameTag.visible) this.nameTag.quaternion.copy(camera.quaternion);
+  }
+
+  /** 수갑 보이기/숨기기 + 두 손목을 잇는 사슬 놓기. */
+  _updateCuffs(on) {
+    const { pieces, chain, wrists } = this.cuffs;
+    for (const piece of pieces) piece.visible = on;
+    if (!on || !chain || wrists.length < 2) return;
+    const a = wrists[0].getWorldPosition(CUFF_A);
+    const b = wrists[1].getWorldPosition(CUFF_B);
+    const span = CUFF_DIR.subVectors(b, a);
+    const length = span.length();
+    this.group.worldToLocal(chain.position.copy(a).addScaledVector(span, 0.5));
+    // 실린더는 로컬 +Y 축으로 서 있다. 두 손목을 잇는 방향으로 눕힌다.
+    chain.quaternion.copy(this.group.getWorldQuaternion(CUFF_Q).invert())
+      .multiply(CUFF_Q2.setFromUnitVectors(CUFF_UP, span.divideScalar(length || 1)));
+    chain.scale.set(1, Math.max(0.02, length), 1);
   }
 
   dispose() {
@@ -215,9 +243,9 @@ class Avatar {
     });
     this.nameTag.material.map.dispose();
     this.nameTag.material.dispose();
-    // 어깨 표식 두 개는 재질을 공유한다. 같은 재질을 두 번 해제하지 않는다.
+    // 어깨 표식과 수갑은 각각 재질 하나를 나눠 쓴다. 두 번 해제하지 않는다.
     const released = new Set();
-    for (const piece of this.gear) {
+    for (const piece of [...this.gear, ...this.cuffs.pieces]) {
       piece.geometry.dispose();
       if (released.has(piece.material)) continue;
       released.add(piece.material);
@@ -280,16 +308,79 @@ function attachGear(body, spec) {
       new THREE.Vector3(0, 1.665, -0.01));
   }
   if (spec.band) {
-    // 어깨 표식. 팔뼈의 축 방향은 모델마다 다르므로 방향을 타지 않는 구로 만든다.
+    /* 어깨 표식.
+     *
+     * 예전에는 어깨 관절 "바로 위" 에 붙였다. 관절이 움직이지 않으니 팔을 들어도
+     * 표식은 그 자리에 남았고, 결국 목 옆에 뭔가 채워 놓은 것처럼 보였다.
+     * 위팔 한가운데(어깨와 팔꿈치의 중간)에 붙이면 팔을 따라 움직인다.
+     */
     const bandMat = new THREE.MeshStandardMaterial({
       color: spec.band, emissive: spec.band, emissiveIntensity: 0.9, roughness: 0.6,
     });
-    for (const [boneName, x] of [['mixamorigLeftArm', 0.175], ['mixamorigRightArm', -0.175]]) {
-      put(boneName, new THREE.SphereGeometry(0.055, 10, 8), bandMat,
-        new THREE.Vector3(x, 1.43, 0));
+    for (const [boneName, elbowName] of [
+      ['mixamorigLeftArm', 'mixamorigLeftForeArm'],
+      ['mixamorigRightArm', 'mixamorigRightForeArm'],
+    ]) {
+      const shoulder = bone(boneName), elbow = bone(elbowName);
+      if (!shoulder) continue;
+      const at = shoulder.getWorldPosition(new THREE.Vector3());
+      if (elbow) at.lerp(elbow.getWorldPosition(new THREE.Vector3()), 0.55);
+      put(boneName, new THREE.SphereGeometry(0.055, 10, 8), bandMat, at);
     }
   }
   return pieces;
+}
+
+/**
+ * 수갑.
+ *
+ * 손목뼈 자리에 고리를 하나씩 채운다. 뼈의 원점에 그대로 붙이므로 어떤 동작을
+ * 재생해도 손목을 떠나지 않는다 — 팔을 들면 목에 가서 걸리는 일이 없다.
+ * 두 고리를 잇는 사슬은 손이 움직이므로 프레임마다 다시 놓는다.
+ *
+ * @returns {{ pieces: THREE.Mesh[], chain: THREE.Mesh|null, wrists: THREE.Object3D[] }}
+ */
+function attachCuffs(body, group) {
+  body.updateMatrixWorld(true);
+  const metal = new THREE.MeshStandardMaterial({
+    color: 0xb4bac2, roughness: 0.32, metalness: 0.9,
+  });
+  const pieces = [];
+  const wrists = [];
+  for (const [handName, foreName] of [
+    ['mixamorigLeftHand', 'mixamorigLeftForeArm'],
+    ['mixamorigRightHand', 'mixamorigRightForeArm'],
+  ]) {
+    const hand = body.getObjectByName(handName);
+    if (!hand) continue;
+    const scale = hand.getWorldScale(new THREE.Vector3()).x || 1;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(0.043, 0.012, 6, 14), metal);
+    ring.scale.setScalar(1 / (Math.abs(scale) > 1e-6 ? scale : 1));
+    // 고리의 축(로컬 +Z)을 팔뚝 방향에 맞춘다. 팔목에 끼운 모양이 된다.
+    const fore = body.getObjectByName(foreName);
+    const axis = fore
+      ? hand.getWorldPosition(new THREE.Vector3()).sub(fore.getWorldPosition(new THREE.Vector3()))
+      : new THREE.Vector3(0, -1, 0);
+    if (axis.lengthSq() < 1e-8) axis.set(0, -1, 0);
+    const world = new THREE.Quaternion()
+      .setFromUnitVectors(new THREE.Vector3(0, 0, 1), axis.normalize());
+    ring.quaternion.copy(hand.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(world));
+    ring.frustumCulled = false;
+    ring.visible = false;
+    hand.add(ring);
+    pieces.push(ring);
+    wrists.push(hand);
+  }
+  // 두 손목을 잇는 사슬 한 토막.
+  let chain = null;
+  if (wrists.length === 2) {
+    chain = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 1, 5), metal);
+    chain.frustumCulled = false;
+    chain.visible = false;
+    group.add(chain);
+    pieces.push(chain);
+  }
+  return { pieces, chain, wrists };
 }
 
 /** 캔버스로 이름표 스프라이트를 만든다 */

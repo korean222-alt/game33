@@ -127,3 +127,91 @@ test('실제 캐릭터 모델에서 총이 손에 붙고 장구류가 몸에 맞
   assert.ok(up.y > 0.5, `총이 옆으로 눕거나 뒤집혔다: ${up.toArray()}`);
   entities.clear();
 });
+
+/* --------------------------------------------------------------------------
+ *  수갑
+ *
+ *  화면에 보인 문제는 "수갑이 손이 아니라 목에 채워져 있다" 였다. 원인은 두
+ *  가지였다. 어깨 표식을 어깨 관절 바로 위(목 옆)에 붙여 두었고, 체포가 끝난
+ *  뒤에도 손을 계속 머리 위로 들고 있어서 손목이 어디 있는지 보이지 않았다.
+ * ----------------------------------------------------------------------- */
+function cuffedAvatar(state) {
+  const entities = new Entities(new THREE.Scene(), assets);
+  entities.spawnNpcs([{ id: 's1', kind: 'suspect', x: 0, y: 0, z: 0, yaw: 0, hp: 100 }]);
+  const avatar = entities.npcs.get('s1');
+  // 남의 캐릭터는 NET.interpDelayMs 만큼 과거를 그린다. 시험에서는 프레임을
+  // 수십 번 돌려도 실제 시간이 거의 흐르지 않으므로, 상태를 "충분히 과거"에
+  // 넣어야 그 시점이 재생 구간에 들어온다.
+  avatar.buffer.buf.length = 0;
+  avatar.push(performance.now() - 1000,
+    { x: 0, y: 0, z: 0, yaw: 0, hp: 100, alive: 1, ...state });
+  const camera = new THREE.PerspectiveCamera();
+  // 자세는 시간을 두고 섞이므로 몇 프레임 돌린다.
+  for (let i = 0; i < 90; i++) entities.update(0.033, camera);
+  avatar.group.updateMatrixWorld(true);
+  return { entities, avatar };
+}
+
+test('수갑은 두 손목에 채워지고 목 근처에 가지 않는다', () => {
+  const { entities, avatar } = cuffedAvatar({ cuffed: 1, hands: 1 });
+  const rings = avatar.cuffs.pieces.filter((p) => p !== avatar.cuffs.chain);
+  assert.equal(rings.length, 2, '손목 고리가 둘이 아니다');
+
+  const head = avatar.rig.root.getObjectByName('mixamorigHead');
+  const neck = head.getWorldPosition(new THREE.Vector3());
+  for (const ring of rings) {
+    assert.equal(ring.visible, true, '체포된 사람인데 수갑이 보이지 않는다');
+    assert.ok(ring.parent?.name?.endsWith('Hand'), '수갑이 손목뼈에 붙어 있지 않다');
+    const at = ring.getWorldPosition(new THREE.Vector3());
+    assert.ok(at.distanceTo(neck) > 0.35, `수갑이 목 옆에 있다: ${at.distanceTo(neck).toFixed(2)}m`);
+    assert.ok(at.y < neck.y - 0.25, '수갑이 머리 높이에 있다');
+    const size = new THREE.Box3().setFromObject(ring).getSize(new THREE.Vector3());
+    assert.ok(size.length() > 0.02 && size.length() < 0.4, `수갑 크기 이상: ${size.toArray()}`);
+  }
+
+  // 사슬이 두 손목을 실제로 잇는다.
+  const [a, b] = avatar.cuffs.wrists.map((w) => w.getWorldPosition(new THREE.Vector3()));
+  assert.ok(a.distanceTo(b) < 0.42, `수갑을 찼는데 두 손목이 멀다: ${a.distanceTo(b).toFixed(2)}m`);
+  const chain = avatar.cuffs.chain.getWorldPosition(new THREE.Vector3());
+  assert.ok(chain.distanceTo(a.clone().lerp(b, 0.5)) < 0.08, '사슬이 두 손목 사이에 있지 않다');
+  entities.clear();
+});
+
+test('수갑을 채우면 들고 있던 손이 내려온다', () => {
+  const up = cuffedAvatar({ hands: 1 });
+  const cuffed = cuffedAvatar({ hands: 1, cuffed: 1 });
+  const wristY = ({ avatar }) => Math.max(
+    ...avatar.cuffs.wrists.map((w) => w.getWorldPosition(new THREE.Vector3()).y));
+
+  const shoulderY = up.avatar.rig.bones.rightArm.getWorldPosition(new THREE.Vector3()).y;
+  assert.ok(wristY(up) > shoulderY, `항복 자세인데 손이 어깨 아래에 있다: ${wristY(up).toFixed(2)}`);
+  assert.ok(wristY(cuffed) < wristY(up) - 0.15,
+    `수갑을 찼는데 손이 그대로다: ${wristY(cuffed).toFixed(2)} vs ${wristY(up).toFixed(2)}`);
+
+  // 항복만 한 사람의 두 손은 벌어져 있고, 수갑을 찬 사람의 두 손은 붙어 있다.
+  const spread = ({ avatar }) => {
+    const [a, b] = avatar.cuffs.wrists.map((w) => w.getWorldPosition(new THREE.Vector3()));
+    return a.distanceTo(b);
+  };
+  assert.ok(spread(cuffed) < spread(up), '수갑을 찼는데 두 손이 모이지 않았다');
+  assert.equal(up.avatar.cuffs.pieces[0].visible, false, '체포 전에는 수갑이 보이면 안 된다');
+  up.entities.clear();
+  cuffed.entities.clear();
+});
+
+test('어깨 표식은 어깨 관절이 아니라 위팔에 붙는다', () => {
+  const { entities, avatar } = cuffedAvatar({});
+  const shoulder = avatar.rig.bones.rightArm.getWorldPosition(new THREE.Vector3());
+  const elbow = avatar.rig.bones.rightForeArm.getWorldPosition(new THREE.Vector3());
+  const armLength = shoulder.distanceTo(elbow);
+  // 표식 두 개 중 오른쪽 위팔에 붙은 것
+  const bands = avatar.gear.filter((p) => p.parent?.name?.endsWith('Arm'));
+  assert.equal(bands.length, 2, '어깨 표식이 둘이 아니다');
+  for (const band of bands) {
+    const at = band.getWorldPosition(new THREE.Vector3());
+    const joint = band.parent.getWorldPosition(new THREE.Vector3());
+    assert.ok(at.distanceTo(joint) > armLength * 0.25,
+      '표식이 어깨 관절에 붙어 있다 (팔을 들면 목 옆으로 간다)');
+  }
+  entities.clear();
+});

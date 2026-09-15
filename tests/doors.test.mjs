@@ -6,7 +6,7 @@ import {
 } from '../public/js/map-data.js';
 import {
   DOOR, DoorSet, rollDoorStates, ensureQuietEntry, doorCollider, isBlocking, throughPoint,
-  doorDistance,
+  doorDistance, openLeafCollider,
 } from '../public/js/doors.js';
 
 const all = (state) => DOORWAYS.map((d) => ({ ...d, state }));
@@ -14,8 +14,10 @@ const all = (state) => DOORWAYS.map((d) => ({ ...d, state }));
 test('닫힌 문은 사람과 시야를 막고, 열면 둘 다 통한다', () => {
   const closed = new DoorSet(all(DOOR.CLOSED));
   const open = new DoorSet(all(DOOR.OPEN));
-  assert.ok(closed.colliders().length > COLLIDERS.length);
-  assert.equal(open.colliders().length, COLLIDERS.length);
+  // 열린 문도 문짝 한 장은 남는다(젖혀진 자리). 문간 자체는 비어 있다.
+  assert.equal(closed.colliders().length, COLLIDERS.length + DOORWAYS.length);
+  assert.equal(open.colliders().length, COLLIDERS.length + DOORWAYS.length);
+  assert.equal(new DoorSet(all(DOOR.DESTROYED)).colliders().length, COLLIDERS.length);
 
   for (const door of DOORWAYS) {
     const a = throughPoint(door, door.x - 3, door.z - 3, 1.2);
@@ -39,6 +41,47 @@ test('문 콜라이더는 문틀 구멍을 정확히 채운다', () => {
     assert.equal(c.y, 0);
     const span = door.axis === 'x' ? c.d : c.w;
     assert.equal(span, door.span);
+  }
+});
+
+/* --------------------------------------------------------------------------
+ *  열린 문짝
+ *
+ *  문을 열면 문짝은 사라지지 않고 경첩 쪽으로 90도 젖혀져 방 안에 서 있다.
+ *  예전에는 이 자리에 콜라이더가 없어서, 눈에 보이는 문짝을 쏘면 총알이 그대로
+ *  통과해 뒤쪽 벽에 박혔다.
+ * ----------------------------------------------------------------------- */
+test('열린 문짝은 제자리에 서서 총알을 막는다', () => {
+  const doors = new DoorSet(all(DOOR.OPEN));
+  const colliders = doors.colliders();
+
+  for (const door of DOORWAYS) {
+    const leaf = openLeafCollider(door);
+    // 문짝은 문틀 폭만큼 길고 얇다.
+    const long = Math.max(leaf.w, leaf.d), thin = Math.min(leaf.w, leaf.d);
+    assert.ok(Math.abs(long - door.span) < 1e-9, `${door.id} 문짝 길이`);
+    assert.ok(thin < 0.12, `${door.id} 문짝 두께`);
+    // 젖혀진 문짝은 벽면(문틀 평면)에 수직이다.
+    const acrossExtent = door.axis === 'x' ? leaf.w : leaf.d;
+    assert.ok(Math.abs(acrossExtent - door.span) < 1e-9, `${door.id} 문짝 방향`);
+
+    // 문짝 한복판을 지나는 선은 막힌다.
+    const across = door.axis === 'x' ? 'x' : 'z';
+    const a = { x: leaf.x, z: leaf.z }, b = { x: leaf.x, z: leaf.z };
+    a[across] -= 2; b[across] += 2;
+    assert.equal(hasLineOfSight(a.x, a.z, b.x, b.z, 1.2, colliders), false,
+      `${door.id} 열린 문짝을 총알이 통과한다`);
+  }
+});
+
+test('열린 문짝이 문간을 막지는 않는다', () => {
+  const doors = new DoorSet(all(DOOR.OPEN));
+  const colliders = doors.colliders();
+  for (const door of DOORWAYS) {
+    const a = throughPoint(door, door.x - 3, door.z - 3, 1.4);
+    const b = throughPoint(door, door.x + 3, door.z + 3, 1.4);
+    assert.equal(hasLineOfSight(a.x, a.z, b.x, b.z, 1.4, colliders), true,
+      `${door.id} 열린 문간이 막혔다`);
   }
 });
 

@@ -317,6 +317,8 @@ export class Game {
     s.on('playerReload', (d) => {
       if (!this.matchActive || d.id === this.myId) return;
       this.audio?.reload(d.duration || 2.3, { x: d.x, y: (d.y || 0) + 1.1, z: d.z });
+      // 소리만 나고 손은 가만히 있으면 누가 장전 중인지 눈으로 알 수 없다.
+      this.entities.players.get(d.id)?.rig.trigger('reload', d.duration || 2.3);
     });
 
     s.on('npcArrested', (d) => {
@@ -544,10 +546,14 @@ export class Game {
     if (me.reloading) this._reloadAcked = true;
     const awaitingAck = this.reloading && !this._reloadAcked
       && performance.now() - (this._reloadSentAt || 0) < RELOAD_ACK_GRACE;
-    if (this.reloading && !me.reloading && !awaitingAck) this.audio?.cancelReload();
+    if (this.reloading && !me.reloading && !awaitingAck) {
+      // 서버가 장전이 끝났다(또는 취소됐다)고 알려 주면 소리와 손동작을 같이 멈춘다.
+      this.audio?.cancelReload();
+      this.player.cancelReload();
+    }
     this.reloading = !!me.reloading || awaitingAck;
     this.hp = me.hp;
-    if (!me.alive) this.audio?.cancelReload();
+    if (!me.alive) { this.audio?.cancelReload(); this.player.cancelReload(); }
     this.gas = me.gas || 0;
     if (me.grenades) this.grenades = me.grenades;
     if (me.sel && me.sel !== this.selectedGrenade) this.selectedGrenade = me.sel;
@@ -746,6 +752,8 @@ export class Game {
     this._reloadSentAt = performance.now();
     this.hud.setAmmo(this.ammo, this.reserve, true, this.weaponName);
     this.audio?.reload(w.reload);
+    // 손동작도 같이 시작한다. 소리와 같은 길이라 박자가 맞는다.
+    this.player.startReload(w.reload);
     this.socket.emit('reload');
   }
 

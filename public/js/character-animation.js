@@ -66,10 +66,14 @@ export class CharacterRig {
       if (bone) this.rest.set(name, bone.quaternion.clone());
     }
     this.handsUp = 0;
+    this.cuffed = 0;
     this._tmpA = new THREE.Vector3();
     this._tmpB = new THREE.Vector3();
     this._tmpC = new THREE.Vector3();
+    this._tmpD = new THREE.Vector3();
+    this._tmpE = new THREE.Vector3();
     this._tmpQ = new THREE.Quaternion();
+    this._tmpQ2 = new THREE.Quaternion();
     // 총기 정렬용. 매 프레임 새로 만들지 않는다.
     this._muzzle = null;
     this._axisX = new THREE.Vector3();
@@ -97,22 +101,30 @@ export class CharacterRig {
     return true;
   }
 
-  /** 한 번 재생하는 동작(사격/재장전/피격). */
-  trigger(name) {
+  /**
+   * 한 번 재생하는 동작(사격/재장전/피격).
+   * @param seconds  이 시간에 맞춰 재생 속도를 늘리고 줄인다. 재장전은 총마다
+   *                 걸리는 시간이 달라서(2.0~3.2초) 클립 길이를 그대로 쓰면
+   *                 소리가 아직 나는데 손은 이미 멈춰 있다.
+   */
+  trigger(name, seconds = 0) {
     const spec = ONE_SHOT[name];
     const action = this.actions.get(name);
     if (!spec || !action) return false;
+    const duration = action.getClip().duration;
+    const timeScale = seconds > 0 && duration > 0
+      ? Math.max(0.35, Math.min(3, duration / seconds)) : spec.timeScale;
     // 같은 동작이 이미 돌고 있으면 처음부터 다시
     action.reset();
     action.setLoop(THREE.LoopOnce, 1);
-    action.timeScale = spec.timeScale;
+    action.timeScale = timeScale;
     action.enabled = true;
     action.fadeIn(spec.fade).play();
     if (this.base) this.base.fadeOut(spec.fade);
     if (this.oneShot && this.oneShot !== action) this.oneShot.fadeOut(spec.fade);
     this.oneShot = action;
     this.oneShotName = name;
-    this.oneShotUntil = this.time + (action.getClip().duration / spec.timeScale) * 1000;
+    this.oneShotUntil = this.time + (duration / timeScale) * 1000;
     return true;
   }
 
@@ -147,7 +159,8 @@ export class CharacterRig {
    * @param state.strafe    측면 성분 (-1~1, +는 오른쪽)
    * @param state.crouch    웅크림
    * @param state.aiming    무기를 들어 겨누는 중
-   * @param state.hands     손을 든 상태(항복/체포)
+   * @param state.hands     손을 든 상태(항복)
+   * @param state.cuffed    수갑을 찬 상태 (두 손목이 배 앞에 모인다)
    */
   update(dt, state = {}) {
     this.time += dt * 1000;
@@ -166,10 +179,14 @@ export class CharacterRig {
 
     this.mixer.update(dt);
 
-    // 항복 자세: 클립이 없으므로 어깨/팔꿈치만 들어 올린다.
-    const wantHands = state.hands ? 1 : 0;
+    // 항복 / 수갑 자세: 클립이 없으므로 어깨와 팔꿈치를 직접 겨눈다.
+    // 수갑을 채우고 나면 손은 내려와 배 앞에 모인다.
+    const wantHands = state.hands && !state.cuffed ? 1 : 0;
+    const wantCuffs = state.cuffed ? 1 : 0;
     this.handsUp += (wantHands - this.handsUp) * Math.min(1, dt * 6);
+    this.cuffed += (wantCuffs - this.cuffed) * Math.min(1, dt * 5);
     if (this.handsUp > 0.01) this._raiseHands(this.handsUp);
+    if (this.cuffed > 0.01) this._cuffHands(this.cuffed);
   }
 
   _chooseBase(state) {
@@ -195,12 +212,58 @@ export class CharacterRig {
   }
 
   /**
+   * 뼈 하나를 "자식 뼈가 이 방향을 보도록" 돌린다 (월드 기준).
+   *
+   * 뼈마다 로컬 축 규약이 다르므로 축을 가정하지 않는다. 지금 자식 뼈가
+   * 향하는 방향에서 원하는 방향으로 돌리는 회전을 매 프레임 구하기 때문에,
+   * 어떤 클립 위에 얹어도 안전하다.
+   *
+   * @param wanted  월드 좌표의 목표 방향 (정규화되어 있지 않아도 된다)
+   * @param amount  0~1. 원래 자세에서 목표 자세로 섞는 정도
+   */
+  _aimBone(jointName, childName, wanted, amount) {
+    const joint = this.bones[jointName], child = this.bones[childName];
+    if (!joint || !joint.parent || !child || wanted.lengthSq() < 1e-8) return;
+    const origin = joint.getWorldPosition(this._tmpA);
+    const current = child.getWorldPosition(this._tmpB).sub(origin);
+    if (current.lengthSq() < 1e-8) return;
+    current.normalize();
+    const blended = this._tmpC.copy(current)
+      .lerp(this._tmpD.copy(wanted).normalize(), amount).normalize();
+    const world = this._tmpQ2
+      .setFromUnitVectors(current, blended)
+      .multiply(joint.getWorldQuaternion(this._tmpQ));
+    joint.quaternion.copy(
+      joint.parent.getWorldQuaternion(this._tmpQ).invert().multiply(world),
+    );
+    joint.updateMatrixWorld(true);
+  }
+
+  /**
+   * 살아 있는 뼈대에서 몸이 향한 쪽을 읽는다.
+   *
+   * 모델마다 축 규약(rotY 보정 등)이 달라서 "앞" 을 상수로 적어 둘 수 없다.
+   * 대신 두 어깨를 잇는 선에서 오른쪽을 얻고, 위쪽과 외적해서 앞을 구한다.
+   * 어떤 모델을 끼워 넣어도 맞는다.
+   *
+   * @returns {{ right: THREE.Vector3, forward: THREE.Vector3 } | null}
+   */
+  _bodyAxes() {
+    const { leftArm, rightArm } = this.bones;
+    if (!leftArm || !rightArm) return null;
+    const right = rightArm.getWorldPosition(this._tmpA)
+      .sub(leftArm.getWorldPosition(this._tmpB));
+    right.y = 0;
+    if (right.lengthSq() < 1e-8) return null;
+    right.normalize();
+    const forward = new THREE.Vector3().crossVectors(UP, right).normalize();
+    return { right: right.clone(), forward };
+  }
+
+  /**
    * 항복 자세. 전용 클립이 없으므로 어깨와 팔꿈치를 "위쪽"으로 겨눠서 만든다.
-   * 뼈의 로컬 축을 가정하지 않고, 자식 뼈가 향하는 방향을 원하는 방향으로
-   * 돌리는 회전을 매 프레임 계산하므로 어떤 동작 위에 얹어도 안전하다.
    */
   _raiseHands(amount) {
-    const up = new THREE.Vector3(0, 1, 0);
     const point = (jointName, childName, outward) => {
       const joint = this.bones[jointName], child = this.bones[childName];
       if (!joint || !child) return;
@@ -209,23 +272,47 @@ export class CharacterRig {
       if (current.lengthSq() < 1e-8) return;
       current.normalize();
       // 팔이 놓인 평면을 유지한 채 위로 올린다 (아바타가 어느 쪽을 보고 있어도 된다).
-      const horizontal = new THREE.Vector3(current.x, 0, current.z);
+      const horizontal = this._tmpE.set(current.x, 0, current.z);
       if (horizontal.lengthSq() < 1e-6) horizontal.set(current.x || 1, 0, current.z);
-      horizontal.normalize().multiplyScalar(outward);
-      const wanted = horizontal.add(up).normalize();
-      const blended = current.clone().lerp(wanted, amount).normalize();
-      const world = new THREE.Quaternion()
-        .setFromUnitVectors(current, blended)
-        .multiply(joint.getWorldQuaternion(new THREE.Quaternion()));
-      joint.quaternion.copy(
-        joint.parent.getWorldQuaternion(new THREE.Quaternion()).invert().multiply(world),
-      );
-      joint.updateMatrixWorld(true);
+      horizontal.normalize().multiplyScalar(outward).add(UP);
+      this._aimBone(jointName, childName, horizontal, amount);
     };
     point('rightArm', 'rightForeArm', 0.55);
     point('leftArm', 'leftForeArm', 0.55);
     point('rightForeArm', 'rightHand', 0.12);
     point('leftForeArm', 'leftHand', 0.12);
+    this.root.updateMatrixWorld(true);
+  }
+
+  /**
+   * 수갑 찬 자세.
+   *
+   * 체포가 끝난 사람이 손을 계속 머리 위로 들고 있으면 이상하다. 수갑을 채운
+   * 뒤에는 두 손목이 배 앞에 모여 붙어야 한다. 그래야 손목에 채운 수갑이
+   * 실제로 두 손을 묶고 있는 것처럼 보인다.
+   *
+   *   위팔  - 몸통에 붙여 아래로 내린다
+   *   아래팔 - 몸 가운데로, 앞쪽으로 모은다 (두 손목이 만난다)
+   */
+  _cuffHands(amount) {
+    const axes = this._bodyAxes();
+    if (!axes) return;
+    const { right, forward } = axes;
+    // side = +1 이면 그 팔은 몸의 오른쪽에 있다. 안쪽은 그 반대다.
+    const arm = (jointName, childName, side) => {
+      const inward = -side;
+      this._aimBone(jointName, childName, this._tmpE.set(0, -1, 0)
+        .addScaledVector(forward, 0.2).addScaledVector(right, inward * 0.1), amount);
+    };
+    const forearm = (jointName, childName, side) => {
+      const inward = -side;
+      this._aimBone(jointName, childName, this._tmpE.set(0, -0.32, 0)
+        .addScaledVector(forward, 0.62).addScaledVector(right, inward * 0.72), amount);
+    };
+    arm('rightArm', 'rightForeArm', 1);
+    arm('leftArm', 'leftForeArm', -1);
+    forearm('rightForeArm', 'rightHand', 1);
+    forearm('leftForeArm', 'leftHand', -1);
     this.root.updateMatrixWorld(true);
   }
 

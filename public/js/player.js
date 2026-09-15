@@ -14,6 +14,7 @@ import { PredictionHistory } from './prediction-history.js';
 
 import { createWeaponOptic, disposeOptic } from './weapon-optic.js';
 import { sightPosition } from './viewmodel-layout.js';
+import { reloadPose, reloadProgress } from './reload-motion.js';
 
 export class LocalPlayer {
   /**
@@ -51,6 +52,9 @@ export class LocalPlayer {
     this._vmGroup = new THREE.Group();
     this.camera.add(this._vmGroup);
     this.muzzleUntil = 0;
+    // 재장전 동작. null 이면 재장전 중이 아니다.
+    this._reload = null;
+    this._magazine = null;
 
     this.camera.rotation.order = 'YXZ';
   }
@@ -71,14 +75,50 @@ export class LocalPlayer {
     this.muzzleUntil = 0;
     this.spread = COMBAT.spread.idle;
     this._prediction.reset();
+    this.cancelReload();
+  }
+
+  /* ---- 재장전 동작 ------------------------------------------------------ *
+   *  총 모델에는 애니메이션이 없다. 총 전체를 움직여서 탄창을 갈아 끼우는
+   *  동작을 만들고, 빈 탄창은 실제로 화면 아래로 떨어뜨린다.
+   * ----------------------------------------------------------------------- */
+  startReload(seconds = 2.3) {
+    this._reload = { at: performance.now(), seconds: Math.max(0.2, seconds) };
+    if (this._magazine) this._magazine.visible = false;
+  }
+
+  cancelReload() {
+    this._reload = null;
+    if (this._magazine) this._magazine.visible = false;
+  }
+
+  get reloading() { return !!this._reload; }
+
+  /** 총 손잡이 아래에서 떨어질 빈 탄창. 총을 바꿀 때마다 새로 만든다. */
+  _ensureMagazine() {
+    if (this._magazine) return this._magazine;
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(0.035, 0.13, 0.075),
+      new THREE.MeshStandardMaterial({ color: 0x24262a, roughness: 0.62, metalness: 0.35 }),
+    );
+    mesh.castShadow = false;
+    mesh.layers.set(1);             // 1인칭 총과 같은 층 (벽에 파묻히지 않는다)
+    mesh.visible = false;
+    this._vmGroup.add(mesh);
+    this._magazine = mesh;
+    return mesh;
   }
 
   setWeapon(key) {
     this.weapon = key;
     disposeOptic(this._optic);
     this._optic = null;
-    // 이전 뷰모델 정리
+    // 이전 뷰모델 정리 (떨어지던 탄창도 같이 사라진다)
     while (this._vmGroup.children.length) this._vmGroup.remove(this._vmGroup.children[0]);
+    this._magazine?.geometry.dispose();
+    this._magazine?.material.dispose();
+    this._magazine = null;
+    this._reload = null;
     try {
       this.viewmodel = this.assets.instance(key);
     } catch {
@@ -165,8 +205,8 @@ export class LocalPlayer {
     this.vel.set(body.vel.x, body.vel.y, body.vel.z);
     this.onGround = body.onGround;
 
-    // 조준 상태 보간
-    const adsTarget = input.ads ? 1 : 0;
+    // 조준 상태 보간. 재장전 중에는 총을 내리고 손을 쓰므로 조준이 풀린다.
+    const adsTarget = input.ads && !this._reload ? 1 : 0;
     this.adsAmount += (adsTarget - this.adsAmount) * (1 - Math.exp(-14 * dt));
 
     this._updateSpread(dt, input);
@@ -252,16 +292,18 @@ export class LocalPlayer {
     this._sprintK += (sprintDrop - this._sprintK) * (1 - Math.exp(-10 * dt));
 
     const sway = this.moving ? Math.sin(this.bobPhase) * 0.008 * (1 - a) : 0;
+    const rl = this._reloadPose();
 
     this.viewmodel.position.set(
-      lerp(p[0], ap[0], a) + sway,
-      lerp(p[1], ap[1], a) - this._sprintK * 0.10 * (1 - a) + Math.sin(this.bobPhase * 2) * 0.004 * (1 - a),
-      lerp(p[2], ap[2], a),
+      lerp(p[0], ap[0], a) + sway + rl.position[0],
+      lerp(p[1], ap[1], a) - this._sprintK * 0.10 * (1 - a) + Math.sin(this.bobPhase * 2) * 0.004 * (1 - a)
+        + rl.position[1],
+      lerp(p[2], ap[2], a) + rl.position[2],
     );
     this.viewmodel.rotation.set(
-      lerp(r[0], ar[0], a) + this._sprintK * 0.35 * (1 - a),
-      lerp(r[1], ar[1], a),
-      lerp(r[2], ar[2], a) + this._sprintK * 0.30 * (1 - a),
+      lerp(r[0], ar[0], a) + this._sprintK * 0.35 * (1 - a) + rl.rotation[0],
+      lerp(r[1], ar[1], a) + rl.rotation[1],
+      lerp(r[2], ar[2], a) + this._sprintK * 0.30 * (1 - a) + rl.rotation[2],
     );
     const sc = vm.scale ?? 1;
     this.viewmodel.scale.setScalar(sc);
@@ -274,6 +316,31 @@ export class LocalPlayer {
       const muzzle = this.viewmodel.localToWorld(new THREE.Vector3(length / 2, .05, 0));
       this.muzzle.position.copy(this._vmGroup.worldToLocal(muzzle));
     }
+  }
+
+  /**
+   * 지금 프레임의 재장전 자세. 재장전 중이 아니면 0 뭉치를 돌려준다.
+   * 빈 탄창도 여기서 같이 옮긴다(총 위치를 알아야 손잡이 아래에 놓을 수 있다).
+   */
+  _reloadPose() {
+    if (!this._reload) return IDLE_POSE;
+    const k = reloadProgress(performance.now(), this._reload.at, this._reload.seconds);
+    if (k >= 1) { this.cancelReload(); return IDLE_POSE; }
+
+    const pose = reloadPose(k);
+    const vm = VIEWMODEL[this.weapon] || VIEWMODEL.rifle;
+    if (pose.mag) {
+      // 손잡이(총 중심에서 조금 뒤, 아래)에서 출발한다.
+      const mag = this._ensureMagazine();
+      mag.visible = true;
+      mag.position.set(
+        vm.pos[0] + pose.position[0] + pose.mag.position[0],
+        vm.pos[1] + pose.position[1] + pose.mag.position[1],
+        vm.pos[2] + pose.position[2] + pose.mag.position[2],
+      );
+      mag.rotation.set(pose.mag.spin * 0.6, pose.mag.spin * 0.25, pose.mag.spin);
+    } else if (this._magazine) this._magazine.visible = false;
+    return pose;
   }
 
   /* ---- 사격 방향 (탄퍼짐 적용) ------------------------------------------ */
@@ -339,5 +406,9 @@ export class LocalPlayer {
 }
 
 const lerp = (a, b, k) => a + (b - a) * k;
+/** 재장전 중이 아닐 때의 "더할 것 없음". 매 프레임 새로 만들지 않는다. */
+const IDLE_POSE = Object.freeze({
+  position: Object.freeze([0, 0, 0]), rotation: Object.freeze([0, 0, 0]), mag: null,
+});
 /** 문틈을 보는 동안 쓰는 "입력 없음". 입력 객체를 건드리지 않기 위해 따로 둔다. */
 const FROZEN_MOVE = Object.freeze({ x: 0, y: 0 });

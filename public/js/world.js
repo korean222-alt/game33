@@ -11,7 +11,7 @@ import * as THREE from 'three';
 import {
   MAP, WALLS, PROPS, LIGHTS, BOMB_SITES, FURNITURE, DOORWAYS, EXTRACTION,
 } from './map-data.js';
-import { DOOR, isBlocking } from './doors.js';
+import { DOOR, isBlocking, DOOR_LEAF_THICKNESS, DOOR_OPEN_ANGLE } from './doors.js';
 import { wallSections } from './wall-sections.js';
 import { QUALITY } from './config.js';
 import { roomMaterials, dressRoom } from './visuals.js';
@@ -22,7 +22,9 @@ import { roomMaterials, dressRoom } from './visuals.js';
  * 건드리지 않고, 그릴 때만 배율을 곱한다.
  */
 const LIGHT_INTENSITY_SCALE = 4;
-const DOOR_THICKNESS = 0.07;
+/* 문짝 두께는 doors.js 가 콜라이더를 만들 때 쓰는 값과 같아야 한다.
+ * 보이는 문짝과 총알을 막는 상자가 어긋나면 안 된다. */
+const DOOR_THICKNESS = DOOR_LEAF_THICKNESS;
 /* 벽 꼭대기를 천장보다 이만큼 더 올려서 그린다.
  * 벽의 윗면(y = MAP.height)과 천장면(y = MAP.height)이 정확히 겹치면 깊이 값이
  * 같아져서, 카메라가 움직일 때마다 어느 쪽이 앞인지 뒤집히며 천장이 깨져 보인다
@@ -175,30 +177,51 @@ export class World {
       // 경첩 축을 중심으로 도는 피벗. 회전은 보기용이고 충돌은 서버가 판정한다.
       const pivot = new THREE.Group();
       const width = door.span;
+      // 문짝 윗면은 상인방 속으로 조금 들어가게 한다. 딱 맞추면 두 면이 겹쳐
+      // 깜빡이고, 짧게 하면 문 위로 빛이 새는 틈이 보인다.
+      const leafHeight = MAP.doorHeight - 0.08;
       const leaf = new THREE.Mesh(
-        new THREE.BoxGeometry(width, MAP.doorHeight - 0.04, DOOR_THICKNESS), leafMat,
+        new THREE.BoxGeometry(width, leafHeight, DOOR_THICKNESS), leafMat,
       );
-      leaf.position.set(width / 2, (MAP.doorHeight - 0.04) / 2, 0);
+      leaf.position.set(width / 2, leafHeight / 2, 0);
       leaf.castShadow = leaf.receiveShadow = true;
       pivot.add(leaf);
 
       const knob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), knobMat);
-      knob.position.set(width - 0.16, 1.02, DOOR_THICKNESS);
+      // 손잡이는 문짝 면 "위"로 나와야 한다. 면에 딱 붙이면 반쯤 파묻혀
+      // 문짝 표면과 같은 깊이에서 다툰다.
+      knob.position.set(width - 0.16, 1.02, DOOR_THICKNESS / 2 + 0.035);
       pivot.add(knob);
 
-      // 문틀
+      /* 문틀.
+       *
+       * 예전에는 기둥과 상인방이 서로 정확히 같은 평면을 공유했다(바깥면도,
+       * 윗면도 같은 좌표). 면 두 개가 같은 깊이에 겹치면 카메라가 조금만
+       * 움직여도 어느 쪽이 앞인지 뒤집히면서 문틀이 지직거린다(z-fighting).
+       *
+       * 그래서 겹치는 면을 하나도 남기지 않는다.
+       *   - 기둥은 문틀 전체 높이를 혼자 담당한다.
+       *   - 상인방은 기둥보다 얇고(깊이) 짧아서(폭) 기둥 "속"에 파묻힌다.
+       *   - 상인방의 윗면은 문 위 벽(lintel)의 밑면보다 아래에 둔다. */
       const frame = new THREE.Group();
+      const POST_W = 0.09, POST_D = door.thickness + 0.06;
+      const HEAD_H = 0.11;
+      const frameTop = MAP.doorHeight + HEAD_H;
       for (const side of [-1, 1]) {
         const post = new THREE.Mesh(
-          new THREE.BoxGeometry(0.09, MAP.doorHeight + 0.08, door.thickness + 0.04), frameMat,
+          new THREE.BoxGeometry(POST_W, frameTop, POST_D), frameMat,
         );
-        post.position.set(side * (width / 2 + 0.045), (MAP.doorHeight + 0.08) / 2, 0);
+        // 기둥 안쪽 면을 문간 쪽으로 2cm 내민다. 그렇게 하지 않으면 기둥의
+        // 안쪽 면과 옆 벽의 끝 면이 정확히 같은 평면에 놓여 서로 깜빡인다.
+        post.position.set(side * (width / 2 + POST_W / 2 - 0.02), frameTop / 2, 0);
         frame.add(post);
       }
       const head = new THREE.Mesh(
-        new THREE.BoxGeometry(width + 0.18, 0.09, door.thickness + 0.04), frameMat,
+        // 폭은 기둥 한가운데까지, 깊이는 기둥보다 얇게 -> 맞닿는 면이 없다.
+        new THREE.BoxGeometry(width + POST_W, HEAD_H, door.thickness + 0.03), frameMat,
       );
-      head.position.y = MAP.doorHeight + 0.04;
+      // 윗면은 문 위 벽 속으로 1cm 밀어 넣는다(면이 겹치지 않게).
+      head.position.y = MAP.doorHeight + 0.01 - HEAD_H / 2;
       frame.add(head);
 
       const group = new THREE.Group();
@@ -218,7 +241,9 @@ export class World {
     const entry = this.doorMeshes.get(id);
     if (!entry) return;
     entry.state = state;
-    entry.target = isBlocking(state) ? 0 : Math.PI * 0.52;
+    // 열린 각도는 정확히 90도다. doors.js 의 openLeafCollider 가 축에 나란한
+    // 상자로 같은 자리를 막으므로, 보이는 문짝과 총알이 막히는 자리가 같다.
+    entry.target = isBlocking(state) ? 0 : DOOR_OPEN_ANGLE;
     if (state === DOOR.DESTROYED) entry.target = Math.PI * 0.62;
     entry.pivot.visible = !entry.peeking && state !== DOOR.DESTROYED;
   }

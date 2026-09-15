@@ -35,6 +35,10 @@ export const DOOR_ACTIONS = {
 
 export const DOOR_REACH = 1.9;
 const LEAF = 0.16;
+/** 문짝 두께. world.js 의 DOOR_THICKNESS 와 같아야 한다. */
+export const DOOR_LEAF_THICKNESS = 0.07;
+/** 열린 문이 젖혀지는 각도. 정확히 90도라서 콜라이더가 축에 나란하다. */
+export const DOOR_OPEN_ANGLE = Math.PI / 2;
 
 /**
  * (x,z) 에서 문까지의 거리.
@@ -61,6 +65,32 @@ export function doorCollider(door) {
   return door.axis === 'x'
     ? { ...base, w: Math.max(door.thickness, LEAF), d: door.span }
     : { ...base, w: door.span, d: Math.max(door.thickness, LEAF) };
+}
+
+/**
+ * 열린 문짝 한 장의 콜라이더.
+ *
+ * 문을 열면 문짝은 사라지는 것이 아니라 경첩을 축으로 90도 젖혀져서 방 안쪽에
+ * 널빤지 한 장으로 서 있다. 예전에는 열린 문에 콜라이더가 하나도 없어서,
+ * 눈에 보이는 문짝을 쏘면 총알이 그대로 통과해 뒤쪽 벽에 박혔다. 사람도
+ * 문짝을 뚫고 지나갔다. 젖혀진 자리에 그대로 상자를 놔둔다.
+ *
+ * 좌표 유도 (world.js 의 _buildDoors 와 같은 배치다)
+ *   - 그룹 로컬에서 경첩은 x = -hinge*span/2, 문짝은 로컬 +X 로 span 만큼 뻗는다.
+ *   - 90도 젖히면 문짝 중심은 (-hinge*span/2, -hinge*span/2) 로 가고,
+ *     길이 축이 로컬 Z, 두께 축이 로컬 X 가 된다.
+ *   - axis 가 'x' 인 문은 그룹이 y축으로 90도 돌아 있으므로
+ *     (로컬 x, 로컬 z) -> (월드 z, 월드 -x) 로 바뀐다.
+ */
+export function openLeafCollider(door, thickness = DOOR_LEAF_THICKNESS) {
+  const span = door.span;
+  const offset = -door.hinge * span / 2;
+  const base = {
+    y: 0, h: MAP.doorHeight - 0.04, kind: 'doorLeaf', id: door.id,
+  };
+  return door.axis === 'x'
+    ? { ...base, x: door.x + offset, z: door.z - offset, w: span, d: thickness }
+    : { ...base, x: door.x + offset, z: door.z + offset, w: thickness, d: span };
 }
 
 /**
@@ -116,13 +146,24 @@ export class DoorSet {
     return true;
   }
 
-  /** 지금 막혀 있는 문을 포함한 충돌/시야용 콜라이더 목록. */
+  /**
+   * 충돌/시야용 콜라이더 목록.
+   *
+   *   닫힘/잠김/바리케이드 - 문틀을 가득 막는 문짝
+   *   열림                 - 경첩 쪽으로 젖혀진 문짝 (문간은 비어 있다)
+   *   파괴                 - 없음 (부서져서 사라졌다)
+   */
   colliders() {
-    const signature = this.doors.map((d) => (isBlocking(d.state) ? '1' : '0')).join('');
+    const signature = this.doors
+      .map((d) => (isBlocking(d.state) ? '1' : d.state === DOOR.OPEN ? '2' : '0')).join('');
     if (signature !== this._signature) {
       this._signature = signature;
-      const blocked = this.doors.filter((d) => isBlocking(d.state));
-      this._colliders = blocked.length ? COLLIDERS.concat(blocked.map(doorCollider)) : COLLIDERS;
+      const extra = [];
+      for (const d of this.doors) {
+        if (isBlocking(d.state)) extra.push(doorCollider(d));
+        else if (d.state === DOOR.OPEN) extra.push(openLeafCollider(d));
+      }
+      this._colliders = extra.length ? COLLIDERS.concat(extra) : COLLIDERS;
     }
     return this._colliders;
   }
