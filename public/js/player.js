@@ -28,6 +28,7 @@ export class LocalPlayer {
     this.colliders = colliders;
     this.holdingUse = false;
     this.frozen = false;      // 문틈 확인 중에는 이동을 멈춘다
+    this.flashlight = false;  // 손전등 (L). 정전 뒤에는 이것 없이 못 본다
 
     this.pos = new THREE.Vector3(0, 0, 4.6);
     this.vel = new THREE.Vector3();
@@ -319,6 +320,8 @@ export class LocalPlayer {
       sprint: this.sprinting ? 1 : 0,
       crouch: this.crouching ? 1 : 0,
       use: this.holdingUse ? 1 : 0,
+      // 손전등. 켜면 보이지만, 나도 보인다 - 서버가 발견 판정에 쓴다.
+      light: this.flashlight ? 1 : 0,
     };
   }
 

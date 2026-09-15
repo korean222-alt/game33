@@ -144,16 +144,17 @@ test('two clients: readiness gate, shot validation, doors, 장비, 단계, room 
   assert.equal(snapshot.doors.length, DOORWAYS.length);
 
   /* ---- 오래된 입력은 무시된다 ---- */
-  host.emit('input', { seq: 2, x: 0, y: 0, z: 24, yaw: 0, pitch: 0 });
+  // z = 32 는 담장 안 앞마당. 저택(z < 26) 밖이라 아직 '내부 진입'이 아니다.
+  host.emit('input', { seq: 2, x: 0, y: 0, z: 32, yaw: 0, pitch: 0 });
   const moved = await waitFor(host, 'snapshot', (s) => s.players.find((p) => p.id === host.id).inputSeq === 2);
-  const at24 = moved.players.find((p) => p.id === host.id);
-  assert.equal(at24.z, 24);
+  const outside = moved.players.find((p) => p.id === host.id);
+  assert.equal(outside.z, 32);
   host.emit('input', { seq: 1, x: 12, y: 0, z: 12, yaw: 0, pitch: 0 });
   await delay(120);
   const afterStale = await waitFor(host, 'snapshot');
   const unchanged = afterStale.players.find((p) => p.id === host.id);
   assert.equal(unchanged.inputSeq, 2);
-  assert.equal(unchanged.z, 24);
+  assert.equal(unchanged.z, 32);
 
   /* ---- 미션표가 실시간으로 갱신된다 ----
    * 예전에는 단계가 통째로 끝날 때만 목표 목록을 보냈다. 그래서 외곽 경비를

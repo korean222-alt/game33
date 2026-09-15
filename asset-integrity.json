@@ -58,5 +58,13 @@
   "public/assets/textures/brick-normal.jpg": {
     "bytes": 638142,
     "sha256": "f26fcec8bbb40eb8dc2ea9f4c87ea4ebe5f53e490cbda966c97eb7cfb1d242a6"
+  },
+  "public/assets/audio/hurt-male.mp3": {
+    "bytes": 17760,
+    "sha256": "71d5a3d9c290f3e76973bc5ddf9b15109f118d929db382b8cf35d4f9e39e850e"
+  },
+  "public/assets/audio/door-slam.mp3": {
+    "bytes": 96966,
+    "sha256": "a5a1dd430883095e5a580dbcbb1d0b5357fd9c1ed9b70fea3acb582af9310831"
   }
 }

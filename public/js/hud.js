@@ -207,6 +207,29 @@ export class Hud {
   }
 
   /**
+   * 손전등 표시.
+   *
+   * 켠 상태가 곧 위험이므로(불빛 때문에 먼저 발견된다) 화면에 계속 남는다.
+   * quiet = true 면 소리 없이 표시만 맞춘다(작전 시작 시 초기화).
+   */
+  setFlashlight(on, quiet = false) {
+    const el = $('torch');
+    if (el) {
+      el.classList.toggle('on', !!on);
+      el.textContent = on ? '손전등 켜짐 · L' : '손전등 꺼짐 · L';
+    }
+    $('bLight')?.classList.toggle('on', !!on);
+    if (!quiet && on) this.killfeed('손전등 켜짐 — 불빛은 상대도 본다');
+  }
+
+  /** 정전. 화면 가장자리를 눌러 "안이 캄캄해졌다"는 것을 느끼게 한다. */
+  setBlackout(on) {
+    $('blackout')?.classList.toggle('on', !!on);
+    const el = $('torch');
+    if (el) el.classList.toggle('hidden', !on);
+  }
+
+  /**
    * 대사 자막.
    *
    * 대사는 영어로 외친다. 기기에 영어 목소리가 없으면 말 자체가 안 나오고,

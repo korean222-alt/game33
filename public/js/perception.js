@@ -64,13 +64,18 @@ export function hasClearShot(eye, target, targetHeight, colliders) {
 /**
  * 발견 확률 계수. 어두운 실내, 웅크린 자세, 정지 상태는 발견을 늦춘다.
  * 0 이면 못 본다.
+ *
+ * 손전등(target.light)은 이 계산을 뒤집는다. 켜면 내가 보이지만, 어둠 속에서
+ * 움직이는 불빛은 그 자체가 표적이라 훨씬 먼저 눈에 띈다. 밝은 곳에서는 이미
+ * 잘 보이므로 더 나빠질 것이 별로 없다 - 그래서 어두울수록 손해가 크다.
  */
 export function visibilityFactor(target, distance, brightness) {
   let factor = 1 - Math.min(0.72, distance / 26);
   if (target.crouch) factor *= 0.72;
   if (target.sprint) factor *= 1.25;
   else if (!target.moving) factor *= 0.82;
-  factor *= 0.45 + brightness * 0.55;
+  const lit = target.light ? Math.max(brightness, 0.85) : brightness;
+  factor *= 0.45 + lit * 0.55;
   return Math.max(0, factor);
 }
 

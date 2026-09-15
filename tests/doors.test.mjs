@@ -116,14 +116,14 @@ test('봇 길찾기는 문을 무시한다 (직접 열기 때문). 모든 방과
 
 test('문 사이를 지나는 선분을 찾아낸다 (봇이 열어야 할 문)', () => {
   const doors = new DoorSet(all(DOOR.CLOSED));
-  const door = doors.get('hall-library');
+  const door = doors.get('hall-study');
   const from = { x: door.x - 2, z: door.z };
   const to = { x: door.x + 2, z: door.z };
-  assert.equal(doors.blockingBetween(from, to)?.id, 'hall-library');
+  assert.equal(doors.blockingBetween(from, to)?.id, 'hall-study');
   // 문에서 멀리 떨어진 같은 벽 통과는 그 문이 아니다
   assert.notEqual(doors.blockingBetween({ x: door.x - 2, z: door.z + 6 }, { x: door.x + 2, z: door.z + 6 })?.id,
-    'hall-library');
-  doors.setState('hall-library', DOOR.OPEN);
+    'hall-study');
+  doors.setState('hall-study', DOOR.OPEN);
   assert.equal(doors.blockingBetween(from, to), null);
 });
 

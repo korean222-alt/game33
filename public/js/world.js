@@ -39,6 +39,7 @@ export class World {
     this.siteMarkers = new Map();   // siteId -> { group, ring, mat }
     this.evidenceMarkers = new Map();
     this.doorMeshes = new Map();    // doorId -> { pivot, leaf, state }
+    this.power = true;              // 저택 전기 (정전되면 실내등이 꺼진다)
     this._t = 0;
   }
 
@@ -280,30 +281,33 @@ export class World {
   }
 
   /* ---- 조명 ------------------------------------------------------------- */
+  /*
+   * 조명.
+   *
+   * 실제 광원(PointLight)은 기기가 감당할 수 있는 개수(q.pointLights)만 만든다.
+   * 방이 17칸이라 등은 25개가 넘는데, 앞에서부터 몇 개만 켜면 저택 절반이
+   * 늘 캄캄하다. 그래서 광원을 "자리"가 아니라 "묶음"으로 두고, 가까운 등
+   * 몇 개에 번갈아 붙인다. 전구 알맹이(bulb)는 전부 만들어 둔다 - 멀리서
+   * 보이는 것은 그 점이지 빛이 아니다.
+   */
   _buildLights(q) {
     // 밤이므로 전체 조명은 아주 낮게. 어둠 자체가 엄폐다.
-    const ambient = new THREE.AmbientLight(0x2a3644, .5);
-    ambient.layers.enable(1); this.scene.add(ambient);
+    this.ambient = new THREE.AmbientLight(0x2a3644, .5);
+    this.ambient.layers.enable(1); this.scene.add(this.ambient);
 
-    const moon = new THREE.HemisphereLight(0x4a6683, 0x1a1c17, .55);
-    moon.layers.enable(1);
-    this.scene.add(moon);
+    this.moon = new THREE.HemisphereLight(0x4a6683, 0x1a1c17, .55);
+    this.moon.layers.enable(1);
+    this.scene.add(this.moon);
 
-    const lights = LIGHTS.filter((L) => L.kind !== 'lamp').slice(0, q.pointLights)
-      .concat(LIGHTS.filter((L) => L.kind === 'lamp'));
-    for (const L of lights) {
-      const light = new THREE.PointLight(L.color, L.intensity * LIGHT_INTENSITY_SCALE, L.distance, 2);
-      light.position.set(L.x, L.y, L.z);
-      light.layers.enable(1);
-      this.scene.add(light);
-      this.pointLights.push(light);
-
+    this.fixtures = [];
+    for (const L of LIGHTS) {
       const bulb = new THREE.Mesh(
         new THREE.SphereGeometry(L.kind === 'lamp' ? 0.09 : 0.055, 8, 6),
         new THREE.MeshBasicMaterial({ color: L.color }),
       );
-      bulb.position.copy(light.position);
+      bulb.position.set(L.x, L.y, L.z);
       this.scene.add(bulb);
+      this.fixtures.push({ def: L, bulb, on: true });
 
       if (L.kind === 'lamp') {
         const post = new THREE.Mesh(
@@ -316,13 +320,99 @@ export class World {
       }
     }
 
+    // 실제 광원 묶음. 매 프레임 가까운 등에 다시 붙인다.
+    const lampCount = LIGHTS.filter((L) => L.kind === 'lamp').length;
+    this.lightPool = [];
+    for (let i = 0; i < q.pointLights + Math.min(4, lampCount); i++) {
+      const light = new THREE.PointLight(0xffffff, 0, 1, 2);
+      light.layers.enable(1);
+      this.scene.add(light);
+      this.lightPool.push(light);
+      this.pointLights.push(light);
+    }
+    this._lightAccum = 99;
+
     // 달빛 대신 저택 전면을 비추는 하나의 그림자 광원
-    const key = new THREE.SpotLight(0xbcd2e8, 260, 60, Math.PI * .42, .7, 2);
-    key.position.set(6, 14, 28); key.target.position.set(0, 0, 6);
+    const key = new THREE.SpotLight(0xbcd2e8, 260, 80, Math.PI * .42, .7, 2);
+    key.position.set(8, 18, 38); key.target.position.set(0, 0, 10);
     key.castShadow = q.shadows; key.shadow.mapSize.set(q.shadowMapSize, q.shadowMapSize);
     key.shadow.bias = -.0005; key.shadow.normalBias = .025;
-    key.shadow.camera.near = .5; key.shadow.camera.far = 70;
+    key.shadow.camera.near = .5; key.shadow.camera.far = 95;
     key.layers.enable(1); this.scene.add(key, key.target); this.keyLight = key;
+
+    /* 손전등.
+     *
+     * 카메라에 붙여 두고 켤 때만 밝기를 올린다. 총(뷰모델)보다 앞에서 쏘고,
+     * 뷰모델 레이어(1)는 비워 둔다 - 안 그러면 총만 하얗게 타고 정작 복도는
+     * 그대로 어둡다. */
+    const torch = new THREE.SpotLight(0xfff1d6, 0, 32, Math.PI * 0.17, 0.5, 1.2);
+    torch.position.set(0.2, -0.1, -0.5);
+    torch.target.position.set(0.02, -0.04, -1.5);
+    torch.add(torch.target);
+    this.torch = torch;
+    this.torchOn = false;
+  }
+
+  /** 손전등을 카메라에 붙인다 (플레이어가 만들어진 뒤에 부른다). */
+  attachTorch(camera) {
+    if (this.torch && this.torch.parent !== camera) camera.add(this.torch);
+  }
+
+  /** 손전등 켜기/끄기. */
+  setTorch(on) {
+    this.torchOn = !!on;
+    if (this.torch) this.torch.intensity = this.torchOn ? 150 : 0;
+  }
+
+  /**
+   * 저택 전기. 끊기면 실내등(chandelier)만 전부 꺼진다. 야외등은 담장 밖
+   * 배선이라 그대로 켜져 있다 - 그래서 창밖은 어슴푸레하고 안은 캄캄하다.
+   */
+  setPower(on) {
+    this.power = !!on;
+    for (const fixture of this.fixtures) {
+      if (fixture.def.kind === 'lamp') continue;
+      fixture.on = this.power;
+      fixture.bulb.visible = this.power;
+    }
+    /* 정전 중에는 전체 조명을 확 떨어뜨린다. 여기를 조금만 낮추면 "불이 꺼진 것
+     * 같긴 한데 다 보이는" 어중간한 화면이 된다. 손전등이 필요해야 의미가 있다. */
+    if (this.ambient) this.ambient.intensity = this.power ? 0.5 : 0.13;
+    if (this.moon) this.moon.intensity = this.power ? 0.55 : 0.18;
+    // 저택 전면을 비추던 광원은 달빛 몫만 남긴다.
+    if (this.keyLight) this.keyLight.intensity = this.power ? 260 : 95;
+    /* 이걸 빼먹으면 아무리 등을 꺼도 화면이 그대로 밝다. visuals.js 가 방 전체를
+     * 은은하게 채우는 환경광(RoomEnvironment)을 깔아 두는데, 그게 실제로는 가장
+     * 센 광원이기 때문이다. 정전이면 이것도 같이 내린다. */
+    this.scene.environmentIntensity = this.power ? 0.5 : 0.08;
+    this._lightAccum = 99;   // 다음 프레임에 바로 다시 배치한다
+  }
+
+  /**
+   * 광원 묶음을 카메라에서 가까운 등에 다시 붙인다.
+   * 매 프레임 할 필요는 없다(0.2초). 등끼리 멀리 떨어져 있어서 바뀌는 순간이
+   * 화면에 잘 걸리지 않는다.
+   */
+  _updateLightPool(dt, camera) {
+    this._lightAccum += dt;
+    if (!camera || !this.lightPool?.length || this._lightAccum < 0.2) return;
+    this._lightAccum = 0;
+    const eye = camera.position;
+    const near = this.fixtures
+      .filter((f) => f.on)
+      .map((f) => ({ f, d: Math.hypot(f.def.x - eye.x, f.def.z - eye.z) }))
+      .filter((e) => e.d < e.f.def.distance + 14)
+      .sort((a, b) => a.d - b.d)
+      .slice(0, this.lightPool.length);
+    this.lightPool.forEach((light, i) => {
+      const entry = near[i];
+      if (!entry) { light.intensity = 0; return; }
+      const L = entry.f.def;
+      light.position.set(L.x, L.y, L.z);
+      light.color.set(L.color);
+      light.distance = L.distance;
+      light.intensity = L.intensity * LIGHT_INTENSITY_SCALE;
+    });
   }
 
   /* ---- 목표 표시 -------------------------------------------------------- */
@@ -473,6 +563,7 @@ export class World {
   update(dt, camera = null) {
     this._t += dt;
     if (this.dust) this.dust.position.y = Math.sin(this._t * .12) * .08;
+    this._updateLightPool(dt, camera);
 
     // 문 여닫힘 보간
     for (const entry of this.doorMeshes.values()) {

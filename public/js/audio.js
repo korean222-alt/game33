@@ -1,4 +1,4 @@
-// Original procedural effects; no downloaded recordings or external requests.
+// Procedural effects plus two recorded samples shipped with the game.
 // AudioContext is created/resumed only by a user gesture (including iOS).
 
 /*
@@ -13,6 +13,26 @@
 const BOOST = 2.0;        // 모든 소리 공통 배율
 const VOX_MAKEUP = 4;     // 대역통과 두 겹을 지나며 잃는 만큼 목소리에 더 준다
 
+/* ---------------------------------------------------------------------------
+ *  녹음 파일
+ *
+ *  사람이 맞는 소리와 문이 닫히는 소리는 합성으로 흉내 내기 가장 어렵다(앞의
+ *  것은 성대, 뒤의 것은 나무통 울림이라 필터 몇 개로는 안 된다). 이 둘만 실제
+ *  녹음을 쓴다.
+ *
+ *  offset / seconds 는 파일 앞뒤의 빈 구간과 긴 잔향 꼬리를 잘라 내기 위한 것이다.
+ *  (브라우저에서 디코딩해 50ms 단위로 재 본 값 — scripts/audio-levels.mjs 와 같은 방식)
+ *    hurt-male  0.89초, 앞 0.1초는 무음, 0.6초 뒤로는 거의 안 들린다
+ *    door-slam  3.03초, 앞 0.22초는 무음, 쾅 소리 뒤로 2초 넘게 잔향이 남는다
+ *
+ *  파일을 못 받아 와도 소리가 사라지지는 않는다. 받아 오기 전까지, 또는 영영 못
+ *  받으면 예전 합성음이 그대로 난다.
+ * ------------------------------------------------------------------------- */
+const SAMPLES = {
+  hurt: { url: '/assets/audio/hurt-male.mp3', offset: 0.08 },
+  door: { url: '/assets/audio/door-slam.mp3', offset: 0.2 },
+};
+
 export class GameAudio {
   constructor({ enabled = true, volume = 0.8, contextFactory } = {}) {
     this.enabled = enabled;
@@ -25,6 +45,8 @@ export class GameAudio {
     this.nodes = new Set();
     this.reloadSources = new Set();
     this.loops = new Map();
+    this.buffers = new Map();      // 이름 -> 디코딩된 녹음
+    this._sampleLoad = null;
     this.speechEnabled = true;
     this._englishVoiceCache = null;
     this._speechPrimed = false;
@@ -78,6 +100,8 @@ export class GameAudio {
       // 소리가 영영 돌아오지 않는다.
       if (this.context.state !== 'running') await this.context.resume();
       this.blocked = this.context.state !== 'running';
+      // 녹음은 기다리지 않는다. 받아오는 동안에는 합성음이 난다.
+      void this.loadSamples();
     } catch { /* Unsupported/blocked audio must not stop gameplay. */ }
   }
 
@@ -158,6 +182,76 @@ export class GameAudio {
     };
     source.start(start);
     source.stop(start + duration + 0.015);
+  }
+
+  /* ----------------------------------------------------------------------- *
+   *  녹음 재생
+   * ----------------------------------------------------------------------- */
+
+  /**
+   * 녹음 파일을 받아 디코딩해 둔다. 소리를 켜는 첫 제스처에 한 번만 부른다.
+   * 실패해도 아무 일도 일어나지 않는다 - 그 소리는 합성음으로 난다.
+   */
+  loadSamples() {
+    if (this._sampleLoad || !this.context) return this._sampleLoad;
+    const context = this.context;
+    this._sampleLoad = Promise.all(Object.entries(SAMPLES).map(async ([name, def]) => {
+      try {
+        const res = await fetch(def.url);
+        if (!res.ok) throw new Error(String(res.status));
+        const data = await res.arrayBuffer();
+        // 구형 Safari 는 Promise 를 안 돌려준다.
+        const buffer = await new Promise((resolve, reject) => {
+          const out = context.decodeAudioData(data, resolve, reject);
+          if (out?.then) out.then(resolve, reject);
+        });
+        if (!this.closed) this.buffers.set(name, buffer);
+      } catch (err) {
+        console.warn(`[audio] ${def.url} 을 못 받았습니다. 합성음으로 대신합니다.`, err?.message || err);
+      }
+    }));
+    return this._sampleLoad;
+  }
+
+  /**
+   * 녹음 한 번 재생. 아직 못 받았으면 false 를 돌려주므로, 부른 쪽이 합성음으로
+   * 넘어갈 수 있다.
+   *
+   * @param seconds  이만큼만 재생하고 200ms 에 걸쳐 닫는다(잔향 꼬리 자르기).
+   */
+  _sample(bus, name, { at = 0, level = 1, rate = 1, seconds = 0 } = {}) {
+    const buffer = this.buffers.get(name);
+    if (!buffer || !bus) return false;
+    const context = this.context;
+    const offset = SAMPLES[name]?.offset || 0;
+    const start = context.currentTime + at;
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.playbackRate.value = Math.max(0.25, Math.min(4, rate));
+    const envelope = context.createGain();
+    const peak = Math.max(0.0001, level);
+    envelope.gain.setValueAtTime(peak, start);
+    const rest = (buffer.duration - offset) / source.playbackRate.value;
+    const length = seconds > 0 ? Math.min(seconds, rest) : rest;
+    if (length < rest - 0.01) {
+      // 딱 끊으면 "뚝" 하고 튄다. 끝에서 200ms 동안 닫는다.
+      envelope.gain.setValueAtTime(peak, start + Math.max(0, length - 0.2));
+      envelope.gain.exponentialRampToValueAtTime(0.0001, start + length);
+    }
+    source.connect(envelope);
+    envelope.connect(bus.gain);
+    bus.pending++;
+    this.sources.add(source);
+    source.onended = () => {
+      this.sources.delete(source);
+      source.disconnect(); envelope.disconnect();
+      if (--bus.pending === 0) {
+        for (const node of bus.nodes) { node.disconnect(); this.nodes.delete(node); }
+      }
+    };
+    source.start(start, offset);
+    source.stop(start + length + 0.02);
+    return true;
   }
 
   /**
@@ -284,6 +378,11 @@ export class GameAudio {
     const bus = this._bus(position);
     if (!bus) return;
     if (action === 'kick' || action === 'breach') {
+      // 녹음한 쾅 소리를 조금 느리게(= 무겁게) 재생한다. 잔향까지 다 쓴다.
+      if (this._sample(bus, 'door', { level: 0.85, rate: 0.9, seconds: 1.9 })) {
+        this._voice(bus, { duration: 0.1, level: 0.3, frequency: 320 });   // 걸쇠가 뜯기는 소리
+        return;
+      }
       this._voice(bus, { duration: 0.1, level: 0.85, frequency: 320 });
       this._voice(bus, { at: 0.01, duration: 0.34, level: 0.5, frequency: 80, tone: true });
       this._voice(bus, { at: 0.12, duration: 0.22, level: 0.2, frequency: 1400 });
@@ -303,7 +402,14 @@ export class GameAudio {
     this._voice(bus, { duration: 0.05, level: 0.42, frequency: 2600 });
     this._voice(bus, { at: 0.06, duration: 0.26, level: 0.34, frequency: 430 });
     this._voice(bus, { at: 0.08, duration: 0.2, level: 0.26, frequency: 120, tone: true });
-    if (action === 'close') this._voice(bus, { at: 0.3, duration: 0.08, level: 0.5, frequency: 260 });
+    /* 여닫히며 문짝이 문틀에 닿는 소리. 같은 녹음이지만 닫을 때는 세게, 열 때는
+     * 약하고 짧게 쓴다(열 때는 문이 끝까지 가서 부딪히는 정도의 소리다). */
+    const thud = action === 'close'
+      ? { at: 0.26, level: 0.5, rate: 1.05, seconds: 1.5 }
+      : { at: 0.3, level: 0.16, rate: 1.2, seconds: 0.7 };
+    if (!this._sample(bus, 'door', thud) && action === 'close') {
+      this._voice(bus, { at: 0.3, duration: 0.08, level: 0.5, frequency: 260 });
+    }
   }
 
   /* ======================================================================= *
@@ -372,6 +478,14 @@ export class GameAudio {
   scream(position = null, kind = 'scream', occluded = false) {
     const bus = this._bus(position, occluded);
     if (!bus) return;
+    /* 맞는 소리는 녹음을 쓴다. 같은 녹음이라도 살짝 맞았을 때는 짧고 높게,
+     * 크게 맞았을 때는 길고 낮게, 쓰러질 때는 더 낮고 느리게 재생한다. */
+    const hits = {
+      pain: { level: 0.75, rate: 1.12, seconds: 0.42 },
+      scream: { level: 1.0, rate: 0.98, seconds: 0.75 },
+      death: { level: 0.85, rate: 0.82, seconds: 0.8 },
+    };
+    if (hits[kind] && this._sample(bus, 'hurt', hits[kind])) return;
     const shapes = {
       pain: { duration: 0.34, level: 0.42, pitch: [300, 360, 170], formants: [640, 1100] },
       scream: { duration: 0.86, level: 0.6, pitch: [430, 660, 580, 230], formants: [840, 1320] },
@@ -468,6 +582,27 @@ export class GameAudio {
     const duration = Math.max(0.5, Math.min(8, Number(seconds) || 3));
     this._voice(bus, { duration, level: 0.16, frequency: 4400, tone: true });
     this._voice(bus, { at: 0.04, duration: duration * 0.8, level: 0.08, frequency: 6200, tone: true });
+  }
+
+  /**
+   * 정전. 두꺼비집이 내려가는 '쿵' 과, 집 전체의 웅웅거림이 꺼지며 남는 여운.
+   * 이 소리를 들은 순간 화면이 어두워지므로, 무슨 일이 났는지 귀로 먼저 안다.
+   */
+  powerCut() {
+    const bus = this._bus();
+    if (!bus) return;
+    this._voice(bus, { duration: 0.08, level: 0.7, frequency: 180 });           // 차단기
+    this._voice(bus, { at: 0.02, duration: 0.5, level: 0.5, frequency: 60, tone: true });
+    this._voice(bus, { at: 0.06, duration: 1.3, level: 0.2, frequency: 120, tone: true }); // 꺼져 가는 웅웅거림
+    this._voice(bus, { at: 0.1, duration: 0.7, level: 0.12, frequency: 2400 });
+  }
+
+  /** 손전등 스위치. 딸깍 한 번. */
+  click(on = true) {
+    const bus = this._bus();
+    if (!bus) return;
+    this._voice(bus, { duration: 0.02, level: 0.35, frequency: on ? 3200 : 2400 });
+    this._voice(bus, { at: 0.02, duration: 0.03, level: 0.18, frequency: on ? 1800 : 1400 });
   }
 
   /** 가스를 마셨다. */

@@ -85,6 +85,8 @@ const DIFFICULTY = {
 };
 
 const OUTDOOR_ZONES = ['COURTYARD', 'WEST YARD', 'EAST YARD', 'GARDEN'];
+/* 담장 밖 배선으로 도는 야외등. 저택이 정전돼도 이것만은 남는다. */
+const OUTDOOR_LIGHTS = LIGHTS.filter((L) => L.kind === 'lamp');
 
 /* ========================================================================== *
  *  유틸
@@ -134,7 +136,9 @@ class Room {
     this.state = 'lobby';       // lobby | briefing | active | won | lost
     this.briefingId = 0;
     this.hostId = null;
-    this.botCount = 6;
+    /* 방이 17칸이라 6명이면 너무 헐겁다. 기본을 8명으로 둔다
+     * (대기실에서 3~14명으로 바꿀 수 있다). */
+    this.botCount = 8;
     this.difficulty = 'normal';
     this.timer = null;
     this.lastTick = now();
@@ -150,6 +154,7 @@ class Room {
     this.sites = [];
     this.evidence = [];
     this.phase = 0;
+    this.power = true;          // 저택 전기. 2단계에 들어가면 저쪽에서 내린다.
     this.objectiveDone = new Set();
     this.flags = { breached: false, reinforced: false, hvtSeen: false };
     this.stats = {
@@ -342,6 +347,8 @@ function makeWorld(room, dt, io) {
   const players = room.standingPlayers.map((p) => ({
     id: p.id, x: p.x, y: p.y, z: p.z, alive: true,
     crouch: !!p.crouch, moving: !!p.moving, sprint: !!p.sprint, hp: p.hp,
+    // 손전등을 켜고 있으면 어둠 속에서도 훨씬 먼저 발견된다.
+    light: !!p.light,
   }));
   const downCount = room.suspects.filter((s) => !s.alive || s.arrested || s.state === 'surrender').length;
 
@@ -351,7 +358,9 @@ function makeWorld(room, dt, io) {
     alliesDown: downCount,
     alliesNear: 0,
     random: Math.random,
-    brightness: (x, z) => brightnessAt(x, z, LIGHTS),
+    /* 저택 전기가 끊기면 실내등은 계산에서 빠진다. 그래서 정전 뒤에는
+     * 실내에서 서로가 잘 안 보인다 - 적도, 나도. */
+    brightness: (x, z) => brightnessAt(x, z, room.power ? LIGHTS : OUTDOOR_LIGHTS),
     playerById: (id) => players.find((p) => p.id === id) || null,
     nearestPlayer: (npc) => {
       let best = null, bestD = Infinity;
@@ -896,6 +905,7 @@ function updateObjectives(room, dt, io) {
     const next = PHASES[room.phase];
     io.to(room.code).emit('phase', objectiveReport(room));
     io.to(room.code).emit('radio', { text: next.radio });
+    if (next.cutPower) cutPower(room, io);
   }
 
   // 마지막 단계에서 증원 병력이 들어온다
@@ -925,9 +935,28 @@ function broadcastObjectives(room, io) {
   io.to(room.code).emit('objectives', report);
 }
 
+/*
+ * 정전.
+ *
+ * 저택 쪽에서 두꺼비집을 내린다. 실내등이 전부 꺼지고, 그때부터 안에서는
+ * 서로가 잘 안 보인다 - 적도 나를 늦게 발견하고, 나도 적을 늦게 본다.
+ * 손전등(L)을 켜면 보이지만, 켠 사람은 어둠 속에서 훨씬 먼저 눈에 띈다.
+ */
+function cutPower(room, io) {
+  if (!room.power) return;
+  room.power = false;
+  io.to(room.code).emit('power', { on: false });
+  io.to(room.code).emit('radio', { text: MISSION.powerCut });
+  // 불이 꺼지는 순간 모두가 움찔한다. 소리가 아니라 상태 변화로 전한다.
+  for (const npc of room.npcs) {
+    if (!npc.alive || npc.kind === 'civilian') continue;
+    npc.morale = Math.max(0, npc.morale - 0.05);
+  }
+}
+
 function spawnReinforcements(room, io) {
   const diff = DIFFICULTY[room.difficulty] || DIFFICULTY.normal;
-  const gate = [{ x: -2.4, z: 32.6 }, { x: 2.4, z: 32.6 }, { x: 0, z: 30.6 }];
+  const gate = [{ x: -2.4, z: 40.6 }, { x: 2.4, z: 40.6 }, { x: 0, z: 38.6 }];
   const created = [];
   for (let i = 0; i < REINFORCE_COUNT; i++) {
     const spot = gate[i % gate.length];
@@ -940,7 +969,7 @@ function spawnReinforcements(room, io) {
     suspect.reinforcement = true;
     suspect.state = 'investigate';
     suspect.stateUntil = now() + 60000;
-    suspect.lastHeard = { x: 0, z: 10, t: now(), level: 1, type: 'contact' };
+    suspect.lastHeard = { x: 0, z: 18, t: now(), level: 1, type: 'contact' };
     room.npcs.push(suspect);
     created.push(suspect);
   }
@@ -1003,6 +1032,7 @@ function applyPlayerInput(room, me, d) {
   me.sprint = d.sprint ? 1 : 0;
   me.crouch = d.crouch ? 1 : 0;
   me.holdingUse = !!d.use;
+  me.light = !!d.light;
   if (d.seq !== undefined) me.inputSeq = d.seq;
 }
 
@@ -1075,6 +1105,7 @@ function startMatch(room, io) {
     doors: room.doors.snapshot(),
     npcs: room.npcs.map(npcPublic),
     objectives: objectiveReport(room),
+    power: room.power,          // 시작은 켜져 있다. 2단계에 들어가면 끊긴다
     grenades: GRENADES,
     grenadeOrder: GRENADE_ORDER,
     players: [...room.players.values()].map((p) => ({
@@ -1140,12 +1171,13 @@ function tickRoom(room, io) {
     seq: room.seq,
     remaining: Math.max(0, room.endsAt - t),
     phase: room.phase,
+    power: room.power ? 1 : 0,
     doors: room.doors.snapshot(),
     players: [...room.players.values()].map((p) => ({
       id: p.id, x: +p.x.toFixed(3), y: +p.y.toFixed(3), z: +p.z.toFixed(3),
       yaw: +p.yaw.toFixed(3), pitch: +p.pitch.toFixed(3),
       hp: p.hp, alive: p.alive, downed: p.downed ? 1 : 0,
-      moving: p.moving, sprint: p.sprint, crouch: p.crouch,
+      moving: p.moving, sprint: p.sprint, crouch: p.crouch, light: p.light ? 1 : 0,
       ammo: p.ammo, reserve: p.reserve, reloading: p.reloadUntil > 0 ? 1 : 0,
       defusing: p.defusing ? 1 : 0,
       gas: +(p.gas || 0).toFixed(2),
@@ -1263,7 +1295,7 @@ io.on('connection', (socket) => {
 
   socket.on('setRoomConfig', ({ botCount, difficulty } = {}) => {
     if (!room || room.hostId !== socket.id || room.state === 'active' || room.state === 'briefing') return;
-    if (botCount) room.botCount = clamp(botCount | 0, 3, 10);
+    if (botCount) room.botCount = clamp(botCount | 0, 3, 14);
     if (difficulty && DIFFICULTY[difficulty]) room.difficulty = difficulty;
     io.to(room.code).emit('lobby', room.lobbyState());
   });

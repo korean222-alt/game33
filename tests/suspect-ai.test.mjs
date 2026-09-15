@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { COLLIDERS, POSTS, findRoute, zoneAt } from '../public/js/map-data.js';
+import { COLLIDERS, POSTS, LIGHTS, findRoute, zoneAt } from '../public/js/map-data.js';
+import { PHASES, MISSION } from '../public/js/mission-story.js';
 import { DOOR, DoorSet, rollDoorStates } from '../public/js/doors.js';
 import {
   NOISE, heardLevel, hitChance, inFieldOfView, visibilityFactor, brightnessAt, hasClearShot,
@@ -85,16 +86,16 @@ test('들리지 않는 소리는 기억되지 않는다', () => {
 
 test('벽 뒤의 플레이어는 보이지 않고, 문을 열면 보인다', () => {
   const doors = closedDoors();
-  const post = POSTS.find((p) => p.room === 'LIBRARY');
+  const post = POSTS.find((p) => p.room === 'STUDY');
   const npc = createSuspect('s', { post, personality: 'defensive' });
   const world = makeWorld({ doors });
   // 대홀 쪽(문 반대편)에 서 있는 플레이어
-  const door = doors.get('hall-library');
+  const door = doors.get('hall-study');
   world.players = [{ id: 'p', x: door.x + 1.2, y: 0, z: door.z, alive: true, crouch: 0, moving: 1 }];
   npc.x = door.x - 1.2; npc.z = door.z;
   npc.yaw = Math.atan2(-(world.players[0].x - npc.x), -(world.players[0].z - npc.z));
   assert.equal(spotTarget(npc, world), null, '닫힌 문은 시야를 막는다');
-  doors.setState('hall-library', DOOR.OPEN);
+  doors.setState('hall-study', DOOR.OPEN);
   world.colliders = doors.colliders();
   assert.ok(spotTarget(npc, world), '열린 문으로는 보인다');
 });
@@ -107,12 +108,39 @@ test('어두우면 발견이 늦다', () => {
   assert.ok(brightnessAt(0, 4, [{ x: 0, y: 5, z: 4, intensity: 80, distance: 27 }]) > brightnessAt(0, 4, []));
 });
 
+test('정전 뒤 손전등은 양날이다 - 켜면 어둠 속에서 훨씬 먼저 발견된다', () => {
+  const dark = { x: 0, z: 0, crouch: 0, moving: 1 };
+  const lit = { ...dark, light: 1 };
+  // 캄캄한 실내(0.05)에서 손전등을 켜면 발견 계수가 크게 오른다.
+  assert.ok(visibilityFactor(lit, 10, 0.05) > visibilityFactor(dark, 10, 0.05) * 1.4);
+  // 이미 밝은 곳에서는 손해가 거의 없다 (불빛이 묻힌다).
+  const brightGain = visibilityFactor(lit, 10, 0.95) / visibilityFactor(dark, 10, 0.95);
+  const darkGain = visibilityFactor(lit, 10, 0.05) / visibilityFactor(dark, 10, 0.05);
+  assert.ok(brightGain < darkGain, `밝은 곳 ${brightGain} < 어두운 곳 ${darkGain}`);
+  // 손전등을 켜도 웅크리고 멈춰 있으면 조금은 낫다.
+  assert.ok(visibilityFactor({ ...lit, crouch: 1, moving: 0 }, 10, 0.05) < visibilityFactor(lit, 10, 0.05));
+});
+
+test('저택이 정전되면 실내 밝기가 야외등만 남는다', () => {
+  const indoor = { x: 0, z: 0 };
+  const all = brightnessAt(indoor.x, indoor.z, LIGHTS);
+  const lampsOnly = brightnessAt(indoor.x, indoor.z, LIGHTS.filter((L) => L.kind === 'lamp'));
+  assert.ok(lampsOnly < all * 0.5, `정전: ${lampsOnly} vs 평시: ${all}`);
+});
+
+test('2단계에 들어가면 저택 전기가 끊긴다', () => {
+  const sweep = PHASES.find((p) => p.id === 'sweep');
+  assert.equal(sweep.cutPower, true, '수색 단계 진입이 정전 시점이다');
+  assert.equal(PHASES.filter((p) => p.cutPower).length, 1, '정전은 한 번만 일어난다');
+  assert.ok(MISSION.powerCut.length > 0, '정전 무전이 있다');
+});
+
 test('플레이어를 보지도 듣지도 못하면 담당 자리를 지킨다 (따라오지 않는다)', () => {
   const post = POSTS.find((p) => p.room === 'GALLERY');
   const npc = createSuspect('s', { post, personality: 'defensive' });
   const world = makeWorld();
   // 플레이어는 저택 밖에 있다
-  world.players = [{ id: 'p', x: 0, y: 0, z: 31, alive: true, crouch: 0, moving: 1 }];
+  world.players = [{ id: 'p', x: 0, y: 0, z: 39, alive: true, crouch: 0, moving: 1 }];
   advance(npc, world, 12);
   assert.ok(['guard', 'patrol'].includes(npc.state), npc.state);
   assert.ok(Math.hypot(npc.x - post.x, npc.z - post.z) < 9, '담당 방을 벗어나지 않는다');
@@ -124,12 +152,12 @@ test('큰 소리는 성향에 따라 확인하러 가거나 문을 겨누고 기
   const post = POSTS.find((p) => p.room === 'DINING ROOM');
   const world = makeWorld({ random: () => 0.01 });
   const pusher = createSuspect('a', { post, personality: 'aggressive' });
-  pusher.lastHeard = { x: 0, z: 12, t: world.now, level: 0.7, type: 'door-kick' };
+  pusher.lastHeard = { x: -14, z: 13, t: world.now, level: 0.7, type: 'door-kick' };
   updateSuspect(pusher, world);
   assert.equal(pusher.state, 'investigate');
 
   const holder = createSuspect('b', { post, personality: 'ambusher' });
-  const door = world.doors.get('hall-dining');
+  const door = world.doors.get('corr-dining');
   holder.lastHeard = { x: door.x, z: door.z, t: world.now, level: 0.7, type: 'door-kick' };
   updateSuspect(holder, world);
   assert.equal(holder.state, 'ambush');
@@ -139,7 +167,7 @@ test('큰 소리는 성향에 따라 확인하러 가거나 문을 겨누고 기
 });
 
 test('작은 소리는 그쪽을 보게만 만든다', () => {
-  const post = POSTS.find((p) => p.room === 'LIBRARY');
+  const post = POSTS.find((p) => p.room === 'STUDY');
   const npc = createSuspect('s', { post, personality: 'coward' });
   const world = makeWorld({ random: () => 0.99 });
   npc.lastHeard = { x: post.x + 3, z: post.z + 3, t: world.now, level: 0.12, type: 'walk' };

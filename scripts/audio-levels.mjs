@@ -36,6 +36,8 @@ const report = await page.evaluate(async () => {
     Object.defineProperty(offline, 'state', { get: () => 'running' });
     const audio = new GameAudio({ contextFactory: () => offline });
     await audio.unlock();
+    // 녹음을 쓰는 소리(피격·문)는 파일이 디코딩된 다음에 재야 실제 크기가 나온다.
+    await audio.loadSamples();
     if (globalThis.RAW && audio.limiter) {
       audio.master.disconnect();
       audio.limiter.disconnect();

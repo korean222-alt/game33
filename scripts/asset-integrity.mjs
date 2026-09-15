@@ -4,10 +4,13 @@ import {createHash} from 'node:crypto';
 import {MODELS} from '../public/js/config.js';
 const manifestURL=new URL('../asset-integrity.json',import.meta.url);
 export const textures=['concrete-color.jpg','concrete-normal.jpg','concrete-rough.jpg','brick-color.jpg','brick-normal.jpg'];
+// 녹음 파일. 잘려서 올라가면 디코딩이 통째로 실패하므로 같이 검사한다.
+export const audio=['hurt-male.mp3','door-slam.mp3'];
 export async function assetIntegrity(write=false){
   // 선택 모델(역할별 캐릭터)은 없을 수 있다. 있는 파일만 검사 대상에 넣는다.
   const candidates=[...Object.values(MODELS).map(m=>({name:'public'+m.url,optional:!!m.optional})),
-    ...textures.map(n=>({name:'public/assets/textures/'+n,optional:false}))];
+    ...textures.map(n=>({name:'public/assets/textures/'+n,optional:false})),
+    ...audio.map(n=>({name:'public/assets/audio/'+n,optional:false}))];
   const files=[];
   const actual={};
   for(const {name,optional} of candidates){

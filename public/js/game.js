@@ -215,6 +215,9 @@ export class Game {
       this.world.setExtractionActive(d.id === 'extract');
     });
 
+    // 정전. 저택 안의 불이 한 번에 나간다.
+    s.on('power', (d) => this._setPower(!!d?.on, true));
+
     s.on('playerShot', (d) => {
       if (!this.matchActive || d.id === this.myId) return;   // 내 총은 내가 이미 그렸다
       this._remoteGunshot(d.weapon || 'rifle', d);
@@ -487,6 +490,11 @@ export class Game {
     this.world.applyDoorStates(d.doors || []);
     this.world.buildEvidence(d.evidence || []);
     this.world.setExtractionActive(false);
+    this.player.flashlight = false;
+    this.world.attachTorch(this.camera);
+    this.world.setTorch(false);
+    this.hud.setFlashlight(false, true);
+    this._setPower(d.power !== false, false);
 
     const me = d.players.find((p) => p.id === this.myId);
     if (me) {
@@ -528,6 +536,8 @@ export class Game {
     if (!this.matchActive || snap.seq <= this._lastSnapshotSeq) return;
     this.remaining = snap.remaining;
     this._lastSnapshotSeq = snap.seq;
+    // 정전 이벤트를 놓쳤어도(늦게 들어온 대원, 잠깐 끊긴 연결) 여기서 맞춰진다.
+    if (snap.power !== undefined) this._setPower(!!snap.power, false);
     this._viewClock = { server: snap.t, local: performance.now() };
 
     if (snap.doors) {
@@ -593,6 +603,10 @@ export class Game {
     this._matchVersion++;
     this.input.disable();
     this.stop();
+    // 결과 화면 뒤에서 손전등이 계속 켜져 있지 않도록 원상태로 돌린다.
+    this.player.flashlight = false;
+    this.world.setTorch(false);
+    this.hud.setBlackout(false);
     this.hud.showTouch(false);
     this.hud.showResult(d, this.myId);
   }
@@ -664,9 +678,11 @@ export class Game {
       this._updateDoor(input, now);
       this._updateUse(input, now);
       if (input.consumeShout()) this._shout(now);
+      if (input.consumeLightToggle()) this._toggleFlashlight();
     } else {
       input.consumeReload(); input.consumeDoor(); input.consumeKick();
       input.consumeShout(); input.consumeThrow(); input.consumeGrenadeSlot();
+      input.consumeLightToggle();
       this._endPeek();
       this.hud.setDoor(null);
     }
@@ -930,6 +946,36 @@ export class Game {
       };
       this.hud.banner(messages[res?.error] || '지금은 문을 조작할 수 없습니다.', 2000);
     });
+  }
+
+  /* ---- 손전등과 정전 ------------------------------------------------------ *
+   *  저택 전기가 끊기면 실내는 캄캄해진다. 손전등을 켜면 앞은 보이지만,
+   *  그 불빛 때문에 어둠 속에서 훨씬 먼저 발견된다(서버의 발견 판정에 들어간다).
+   *  켤지 말지가 곧 선택이 되도록, 양쪽 다 실제로 효과가 있어야 한다.
+   * ----------------------------------------------------------------------- */
+  _toggleFlashlight() {
+    const on = !this.player.flashlight;
+    this.player.flashlight = on;
+    this.world.setTorch(on);
+    this.hud.setFlashlight(on);
+    this.audio?.click?.(on);
+    // 다음 입력 패킷을 기다리지 않고 바로 알린다 (켠 순간부터 표적이 된다).
+    if (this.socket.connected && this.alive) this.socket.emit('input', this.player.netState());
+  }
+
+  /** 저택 전기. announce 가 true 면 화면과 소리로도 알린다. */
+  _setPower(on, announce) {
+    if (this.power === on && !announce) return;
+    this.power = on;
+    this.world.setPower(on);
+    this.hud.setBlackout(!on);
+    if (!announce) return;
+    if (!on) {
+      this.audio?.powerCut();
+      this.hud.banner('정전 — L 손전등', 3600);
+    } else {
+      this.hud.banner('전력 복구', 2400);
+    }
   }
 
   /* ---- 목소리 ------------------------------------------------------------ *

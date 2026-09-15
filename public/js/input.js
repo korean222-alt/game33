@@ -36,6 +36,7 @@ export class Input {
     this.shout = false;
     this.throwGrenade = false;
     this.grenadeSlot = 0;
+    this.lightToggle = false;   // 손전등 켜기/끄기 (L)
 
     this.enabled = false;
     this.locked = false;
@@ -70,6 +71,7 @@ export class Input {
     this.move.x = this.move.y = 0;
     this.fire = this.ads = this.sprint = this.crouch = this.use = this.peek = false;
     this.jump = this.reload = this.door = this.kick = this.shout = this.throwGrenade = false;
+    this.lightToggle = false;
     this.grenadeSlot = 0;
     this.look.dx = this.look.dy = 0;
     this._lookTouchId = this._stickTouchId = null;
@@ -91,6 +93,7 @@ export class Input {
   consumeDoor() { const v = this.door; this.door = false; return v; }
   consumeKick() { const v = this.kick; this.kick = false; return v; }
   consumeShout() { const v = this.shout; this.shout = false; return v; }
+  consumeLightToggle() { const v = this.lightToggle; this.lightToggle = false; return v; }
   consumeThrow() { const v = this.throwGrenade; this.throwGrenade = false; return v; }
   consumeGrenadeSlot() { const v = this.grenadeSlot; this.grenadeSlot = 0; return v; }
 
@@ -108,6 +111,7 @@ export class Input {
       if (k === 'KeyE') this.door = true;
       if (k === 'KeyB') this.kick = true;
       if (k === 'KeyV') this.shout = true;
+      if (k === 'KeyL') this.lightToggle = true;
       if (k === 'KeyG') this.throwGrenade = true;
       if (k === 'Digit1') this.grenadeSlot = 1;
       if (k === 'Digit2') this.grenadeSlot = 2;
@@ -268,6 +272,7 @@ export class Input {
     this._tapBtn('bDoor', () => { this.door = true; });
     this._tapBtn('bKick', () => { this.kick = true; });
     this._tapBtn('bShout', () => { this.shout = true; });
+    this._tapBtn('bLight', () => { this.lightToggle = true; });
     this._tapBtn('bNade', () => { this.throwGrenade = true; });
     this._tapBtn('bNadeSel', () => { this.grenadeSlot = -1; });   // -1 = 다음 장비
   }
@@ -306,7 +311,7 @@ export class Input {
 }
 
 const HANDLED_KEYS = new Set([
-  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyR', 'KeyF', 'KeyC', 'KeyE', 'KeyQ', 'KeyB', 'KeyV', 'KeyG',
+  'KeyW', 'KeyA', 'KeyS', 'KeyD', 'KeyR', 'KeyF', 'KeyC', 'KeyE', 'KeyQ', 'KeyB', 'KeyV', 'KeyG', 'KeyL',
   'Space', 'Digit1', 'Digit2', 'Digit3',
   'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight',
   'ShiftLeft', 'ShiftRight', 'ControlLeft', 'ControlRight',

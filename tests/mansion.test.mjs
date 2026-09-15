@@ -51,11 +51,12 @@ test('horizontal movement can clear a crate in air, but cannot go through it at 
   assert.notDeepEqual(resolveCircle(0,0,.32,c,0),{x:0,z:0});
 });
 test('ceremonial staircase is walkable all the way to the raised landing',()=>{
-  let p={x:0,y:0,z:-5},v={x:0,y:0,z:-2},grounded=true;
+  // 계단은 계단홀 동쪽에 붙어 있다. 그쪽 아치(x = 7)로 들어가면 바로 계단이다.
+  let p={x:7,y:0,z:-14},v={x:0,y:0,z:-2},grounded=true;
   for(let i=0;i<300;i++){
     const b=moveBody(p,{...v,z:-2},1/60,{grounded});p=b.pos;v=b.vel;grounded=b.onGround;
   }
-  assert.ok(p.z<-11,JSON.stringify(p));assert.ok(Math.abs(p.y-2.4)<.001,JSON.stringify(p));
+  assert.ok(p.z<-21,JSON.stringify(p));assert.ok(Math.abs(p.y-2.4)<.001,JSON.stringify(p));
 });
 test('overhead shelves stop upward movement and low openings stay traversable',()=>{
   const shelf=[{x:0,z:0,w:3,d:3,y:2.2,h:.2}];
