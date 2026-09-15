@@ -9,7 +9,7 @@
 
 import * as THREE from 'three';
 import {
-  MAP, WALLS, PROPS, LIGHTS, BOMB_SITES, FURNITURE, DOORWAYS, EXTRACTION,
+  MAP, BACKUP_GENERATOR, WALLS, PROPS, LIGHTS, BOMB_SITES, FURNITURE, DOORWAYS, EXTRACTION,
 } from './map-data.js';
 import { DOOR, isBlocking } from './doors.js';
 import { wallSections } from './wall-sections.js';
@@ -57,6 +57,7 @@ export class World {
     this._buildDoors();
     this._buildProps();
     this._buildFurniture();
+    this._buildGenerator();
     this._buildLights(q);
     this._buildSiteMarkers();
     this._buildExtraction();
@@ -158,7 +159,30 @@ export class World {
           uv.setXY(k, uv.getX(k) * width / 3,
             horizontal ? uv.getY(k) * w.d / 3 : (section.bottom + uv.getY(k) * height) / 3);
         }
-        const mesh = new THREE.Mesh(geo, this.materials[section.material]);
+        // Box end caps at adjacent bands/lintels are internal surfaces. Remove them
+        // only when a neighbouring wall completely covers that face.
+        const covered = (axis, sign) => {
+          const size = axis === 'x' ? w.w : w.d;
+          const plane = w[axis] + sign * size / 2;
+          const otherAxis = axis === 'x' ? 'z' : 'x';
+          const half = (axis === 'x' ? w.d : w.w) / 2;
+          return WALLS.some(other => other !== w &&
+            Math.abs(other[axis] - plane) <= (axis === 'x' ? other.w : other.d) / 2 + 1e-6 &&
+            other[otherAxis] - (axis === 'x' ? other.d : other.w) / 2 <= w[otherAxis] - half + 1e-6 &&
+            other[otherAxis] + (axis === 'x' ? other.d : other.w) / 2 >= w[otherAxis] + half - 1e-6 &&
+            (other.y || 0) <= section.bottom + 1e-6 &&
+            (other.y || 0) + other.h >= Math.min(section.top, MAP.height) - 1e-6);
+        };
+        const hiddenFaces = new Set();
+        if (covered('x', 1)) hiddenFaces.add(0);
+        if (covered('x', -1)) hiddenFaces.add(1);
+        if (covered('z', 1)) hiddenFaces.add(4);
+        if (covered('z', -1)) hiddenFaces.add(5);
+        if (section.bottom > base) hiddenFaces.add(3);
+        if (section.top < base + w.h) hiddenFaces.add(2);
+        geo.groups = geo.groups.filter(g => !hiddenFaces.has(g.materialIndex));
+        const material = this.materials[section.material];
+        const mesh = new THREE.Mesh(geo, Array(6).fill(material));
         mesh.position.set(w.x, (section.bottom + section.top) / 2, w.z);
         mesh.castShadow = mesh.receiveShadow = true;
         this.scene.add(mesh);
@@ -177,7 +201,7 @@ export class World {
       const pivot = new THREE.Group();
       const width = door.span;
       const leaf = new THREE.Mesh(
-        new THREE.BoxGeometry(width, MAP.doorHeight - 0.04, DOOR_THICKNESS), leafMat,
+        new THREE.BoxGeometry(width - 0.04, MAP.doorHeight - 0.04, DOOR_THICKNESS), leafMat,
       );
       leaf.position.set(width / 2, (MAP.doorHeight - 0.04) / 2, 0);
       leaf.castShadow = leaf.receiveShadow = true;
@@ -191,15 +215,15 @@ export class World {
       const frame = new THREE.Group();
       for (const side of [-1, 1]) {
         const post = new THREE.Mesh(
-          new THREE.BoxGeometry(0.09, MAP.doorHeight + 0.08, door.thickness + 0.04), frameMat,
+          new THREE.BoxGeometry(0.09, MAP.doorHeight, door.thickness + 0.08), frameMat,
         );
-        post.position.set(side * (width / 2 + 0.045), (MAP.doorHeight + 0.08) / 2, 0);
+        post.position.set(side * (width / 2 + 0.045), MAP.doorHeight / 2, 0);
         frame.add(post);
       }
       const head = new THREE.Mesh(
-        new THREE.BoxGeometry(width + 0.18, 0.09, door.thickness + 0.04), frameMat,
+        new THREE.BoxGeometry(width + 0.18, 0.09, door.thickness + 0.08), frameMat,
       );
-      head.position.y = MAP.doorHeight + 0.04;
+      head.position.y = MAP.doorHeight + 0.045;
       frame.add(head);
 
       const group = new THREE.Group();
@@ -262,6 +286,36 @@ export class World {
       mesh.userData.collider = f;
       this.scene.add(mesh);
     }
+  }
+
+  setGeneratorState(started) {
+    if (this.generatorLever) this.generatorLever.rotation.x = started ? -.65 : .65;
+    this.generatorLamp?.material.color.setHex(started ? 0x61ef95 : 0xefb942);
+  }
+
+  _buildGenerator() {
+    const gen = BACKUP_GENERATOR;
+    const panel = new THREE.Mesh(new THREE.BoxGeometry(.55, .32, .06),
+      new THREE.MeshStandardMaterial({ color: 0x22262b, roughness: .65 }));
+    panel.position.set(gen.x, .76, gen.z + gen.d / 2 + .035);
+    this.scene.add(panel);
+    this.generatorLever = new THREE.Mesh(new THREE.BoxGeometry(.08, .22, .08),
+      new THREE.MeshStandardMaterial({ color: 0xe5ba44, metalness: .5, roughness: .4 }));
+    this.generatorLever.position.set(gen.x, .76, gen.z + gen.d / 2 + .11);
+    this.scene.add(this.generatorLever);
+    this.generatorLamp = new THREE.Mesh(new THREE.SphereGeometry(.055, 10, 8),
+      new THREE.MeshBasicMaterial({ color: 0xefb942 }));
+    this.generatorLamp.position.set(gen.x + .18, .8, gen.z + gen.d / 2 + .08);
+    this.scene.add(this.generatorLamp);
+    const canvas = document.createElement('canvas'); canvas.width = 512; canvas.height = 96;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#101614'; ctx.fillRect(0, 0, 512, 96);
+    ctx.fillStyle = '#f2d780'; ctx.font = 'bold 34px sans-serif'; ctx.textAlign = 'center';
+    ctx.fillText('예비 발전기 · BACKUP', 256, 59);
+    const label = new THREE.Mesh(new THREE.PlaneGeometry(1.4, .26),
+      new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(canvas), side: THREE.DoubleSide }));
+    label.position.set(gen.x, 1.3, gen.z + gen.d / 2);
+    this.scene.add(label);
   }
 
   /* ---- 소품 (GLB, 없으면 placeholder) ----------------------------------- */
@@ -663,3 +717,4 @@ function makeLabel(text) {
   sprite.renderOrder = 5;
   return sprite;
 }
+

@@ -180,6 +180,8 @@ export class Game {
 
     this._resizeHandler = () => this._onResize();
     addEventListener('resize', this._resizeHandler);
+    addEventListener('gameviewportchange', this._resizeHandler);
+    this._onResize();
     this._wireSocket();
 
     // 디버그용. 브라우저 콘솔에서 __mr.player.pos 등으로 상태를 볼 수 있다.
@@ -190,9 +192,10 @@ export class Game {
 
   _onResize() {
     if (!this.renderer) return;
-    this.camera.aspect = innerWidth / innerHeight;
+    const { width, height } = document.getElementById('app').getBoundingClientRect();
+    this.camera.aspect = width / Math.max(1, height);
     this.camera.updateProjectionMatrix();
-    this.renderer.setSize(innerWidth, innerHeight);
+    this.renderer.setSize(width, height);
     this.pipeline?.resize();
   }
 
@@ -216,7 +219,7 @@ export class Game {
     });
 
     // 정전. 저택 안의 불이 한 번에 나간다.
-    s.on('power', (d) => this._setPower(!!d?.on, true));
+    s.on('power', (d) => this._setPower(!!d?.on, true, !!d?.generatorStarted));
 
     s.on('playerShot', (d) => {
       if (!this.matchActive || d.id === this.myId) return;   // 내 총은 내가 이미 그렸다
@@ -419,6 +422,7 @@ export class Game {
     this.input?.dispose();
     this.audio?.dispose();
     removeEventListener('resize', this._resizeHandler);
+    removeEventListener('gameviewportchange', this._resizeHandler);
     for (const [event, fn] of this._socketHandlers || []) this.socket.off(event, fn);
     this.entities?.clear();
     this.pipeline?.composer.passes.forEach((p) => p.dispose?.());
@@ -496,7 +500,7 @@ export class Game {
     this.world.attachTorch(this.camera);
     this.world.setTorch(false);
     this.hud.setFlashlight(false, true);
-    this._setPower(d.power !== false, false);
+    this._setPower(d.power !== false, false, !!d.generatorStarted);
 
     const me = d.players.find((p) => p.id === this.myId);
     if (me) {
@@ -539,7 +543,7 @@ export class Game {
     this.remaining = snap.remaining;
     this._lastSnapshotSeq = snap.seq;
     // 정전 이벤트를 놓쳤어도(늦게 들어온 대원, 잠깐 끊긴 연결) 여기서 맞춰진다.
-    if (snap.power !== undefined) this._setPower(!!snap.power, false);
+    if (snap.power !== undefined) this._setPower(!!snap.power, false, !!snap.generatorStarted);
     this._viewClock = { server: snap.t, local: performance.now() };
 
     if (snap.doors) {
@@ -970,7 +974,8 @@ export class Game {
   }
 
   /** 저택 전기. announce 가 true 면 화면과 소리로도 알린다. */
-  _setPower(on, announce) {
+  _setPower(on, announce, generatorStarted = false) {
+    this.world.setGeneratorState(generatorStarted);
     if (this.power === on && !announce) return;
     this.power = on;
     this.world.setPower(on);
@@ -1203,3 +1208,4 @@ const workKind = (label = '') => (label.includes('회수') ? 'evidence'
 const clampTo = (v, limit) => Math.max(-limit, Math.min(limit, v));
 /* 장전 요청이 서버에 닿아 스냅샷에 반영될 때까지 기다려 주는 시간(ms). */
 const RELOAD_ACK_GRACE = 700;
+

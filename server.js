@@ -13,6 +13,7 @@
  * ========================================================================== */
 
 import express from 'express';
+import { resetPower, powerCutDue, restorePower } from './public/js/power-state.js';
 import { GAME_PROTOCOL } from './public/js/protocol.js';
 import http from 'http';
 import path from 'path';
@@ -20,7 +21,7 @@ import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
 
 import {
-  MAP, COLLIDERS, SPAWNS, BOMB_SITES, POSTS, CIVILIAN_SPOTS, EVIDENCE_SPOTS,
+  MAP, BACKUP_GENERATOR, COLLIDERS, SPAWNS, BOMB_SITES, POSTS, CIVILIAN_SPOTS, EVIDENCE_SPOTS,
   HVT_ROOMS, EXTRACTION, LIGHTS, COVER_POINTS, ROOMS,
   resolveCircle, rayObstacleDistance, findRoute, isIndoors, zoneAt,
 } from './public/js/map-data.js';
@@ -154,7 +155,7 @@ class Room {
     this.sites = [];
     this.evidence = [];
     this.phase = 0;
-    this.power = true;          // 저택 전기. 2단계에 들어가면 저쪽에서 내린다.
+    resetPower(this);
     this.objectiveDone = new Set();
     this.flags = { breached: false, reinforced: false, hvtSeen: false };
     this.stats = {
@@ -708,9 +709,15 @@ function interactionTarget(room, player) {
   const consider = (kind, id, point, seconds, label) => {
     const d = dist2D(player, point);
     if (d >= bestD) return;
+    if (!hasClearShot({ x: player.x, y: player.y + PLAYER_EYE, z: player.z }, point, 1.1, room.doors.colliders())) return;
     best = { kind, id, seconds, label }; bestD = d;
   };
 
+  if (!room.power && room.powerCutDone && !room.generatorStarted) {
+    consider('generator', BACKUP_GENERATOR.id,
+      { x: BACKUP_GENERATOR.x, z: BACKUP_GENERATOR.z + BACKUP_GENERATOR.d / 2 + 0.05 },
+      BACKUP_GENERATOR.seconds, '예비 발전기 · 차단기 올리기');
+  }
   for (const npc of room.npcs) {
     if (!npc.alive) continue;
     if (npc.kind === 'civilian') {
@@ -733,7 +740,7 @@ function interactionTarget(room, player) {
 
 function updateInteractions(room, dt, io) {
   for (const player of room.players.values()) {
-    if (!player.alive) {
+    if (!player.alive || player.downed) {
       player.interacting = null; player.interactProgress = 0; player.interactLabel = '';
       continue;
     }
@@ -751,7 +758,11 @@ function updateInteractions(room, dt, io) {
 }
 
 function completeInteraction(room, player, target, io) {
-  if (target.kind === 'arrest') {
+  if (target.kind === 'generator') {
+    if (target.id !== BACKUP_GENERATOR.id || !restorePower(room)) return;
+    io.to(room.code).emit('power', { on: true, generatorStarted: true });
+    io.to(room.code).emit('radio', { text: MISSION.powerRestored });
+  } else if (target.kind === 'arrest') {
     const npc = room.npcs.find((n) => n.id === target.id);
     if (!npc || npc.arrested) return;
     npc.arrested = true;
@@ -905,7 +916,7 @@ function updateObjectives(room, dt, io) {
     const next = PHASES[room.phase];
     io.to(room.code).emit('phase', objectiveReport(room));
     io.to(room.code).emit('radio', { text: next.radio });
-    if (next.cutPower) cutPower(room, io);
+    // Power follows entry time, never phase transitions (including after restoration).
   }
 
   // 마지막 단계에서 증원 병력이 들어온다
@@ -1105,7 +1116,8 @@ function startMatch(room, io) {
     doors: room.doors.snapshot(),
     npcs: room.npcs.map(npcPublic),
     objectives: objectiveReport(room),
-    power: room.power,          // 시작은 켜져 있다. 2단계에 들어가면 끊긴다
+    generatorStarted: room.generatorStarted,
+    power: room.power,          // 재접속 시에도 정전/복구 상태를 전달한다
     grenades: GRENADES,
     grenadeOrder: GRENADE_ORDER,
     players: [...room.players.values()].map((p) => ({
@@ -1136,6 +1148,7 @@ function tickRoom(room, io) {
     if (p.downed && t - p.downedAt > BLEED_OUT_MS) killPlayer(room, p, io);
   }
 
+  if (powerCutDue(room, t)) cutPower(room, io);
   updateDoorQueue(room, io);
   updateGrenades(room, dt, io);
 
@@ -1172,6 +1185,7 @@ function tickRoom(room, io) {
     remaining: Math.max(0, room.endsAt - t),
     phase: room.phase,
     power: room.power ? 1 : 0,
+    generatorStarted: room.generatorStarted,
     doors: room.doors.snapshot(),
     players: [...room.players.values()].map((p) => ({
       id: p.id, x: +p.x.toFixed(3), y: +p.y.toFixed(3), z: +p.z.toFixed(3),
@@ -1436,7 +1450,9 @@ io.on('connection', (socket) => {
   socket.on('disconnect', leave);
 });
 
-server.listen(PORT, () => {
+export { Room, tickRoom, updateInteractions };
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) server.listen(PORT, () => {
   console.log('');
   console.log('  ███  RAVENWOOD : 긴 밤  ███');
   console.log(`  구역: ${MAP.name}  (${MAP.width}m x ${MAP.depth}m, 충돌박스 ${COLLIDERS.length}개, 방 ${ROOMS.length}개)`);
@@ -1445,3 +1461,4 @@ server.listen(PORT, () => {
   console.log('  같은 와이파이의 폰에서는 PC의 내부 IP로 접속하세요 (예: http://192.168.0.10:' + PORT + ')');
   console.log('');
 });
+

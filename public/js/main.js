@@ -2,6 +2,9 @@
  *  main.js  -  진입점. 메뉴 -> 로비 -> 게임 -> 결과 흐름을 관리한다.
  * ========================================================================== */
 
+import { installViewport } from './viewport.js';
+installViewport();
+
 import { connect, serverLabel } from './net.js';
 import { Hud, escapeHtml } from './hud.js';
 import { Game } from './game.js';
@@ -373,3 +376,4 @@ function boot() {
 }
 
 boot();
+

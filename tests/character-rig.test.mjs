@@ -127,3 +127,22 @@ test('실제 캐릭터 모델에서 총이 손에 붙고 장구류가 몸에 맞
   assert.ok(up.y > 0.5, `총이 옆으로 눕거나 뒤집혔다: ${up.toArray()}`);
   entities.clear();
 });
+
+
+test('체포된 실제 캐릭터의 수갑은 웅크린 손목을 따라간다', () => {
+  const entities = new Entities(new THREE.Scene(), assets);
+  entities.spawnNpcs([{ id:'cuff-test',kind:'suspect',x:3,y:0,z:4,yaw:1,hp:100 }]);
+  const avatar=entities.npcs.get('cuff-test');
+  avatar.group.position.set(3,0,4);avatar.group.rotation.y=1;
+  for(let i=0;i<60;i++) avatar.rig.update(1/60,{crouch:true,hands:true,cuffed:true});
+  avatar.restraints.update(true);
+  assert.equal(avatar.restraints.group.visible,true);
+  for(const [index,bone] of [[0,avatar.rig.bones.leftHand],[1,avatar.rig.bones.rightHand]]) {
+    const wrist=bone.getWorldPosition(new THREE.Vector3());
+    const cuff=avatar.restraints.rings[index].getWorldPosition(new THREE.Vector3());
+    assert.ok(wrist.distanceTo(cuff)<.03,'수갑이 손목에서 벗어났다');
+  }
+  const hands=avatar.rig.bones;
+  assert.ok(hands.leftHand.getWorldPosition(new THREE.Vector3()).distanceTo(hands.rightHand.getWorldPosition(new THREE.Vector3()))<.45,'수갑 자세에서 두 손을 모으지 않았다');
+  entities.clear();
+});

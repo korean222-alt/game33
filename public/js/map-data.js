@@ -45,6 +45,8 @@ export const MAP = {
   doorHeight: 2.1,
 };
 
+export const BACKUP_GENERATOR = { id: 'backup', x: 32, z: -17.1, w: 1.4, d: 0.8, h: 1.0, seconds: 3 };
+
 const HALF_W = MAP.width / 2, HALF_D = MAP.depth / 2;
 const OUTER = 0.4, INNER = 0.3, FENCE = 0.3;
 
@@ -352,6 +354,8 @@ part(-4.5, -24.6, 3.2, 1.2, 1, 0, 'stone');
 part(13.4, -23.6, 4, 1.3, .75, 0, 'stone');
 part(20.8, -17.6, 3.6, 1.2, .9, 0, 'glass');
 table(20.6, -23.4, 3.2, 1.6);
+// 북동 작업실의 예비 발전기. 렌더링과 이동 충돌이 같은 치수를 쓴다.
+part(BACKUP_GENERATOR.x, BACKUP_GENERATOR.z, BACKUP_GENERATOR.w, BACKUP_GENERATOR.d, BACKUP_GENERATOR.h, 0, 'metal');
 // 작업실: 작업대와 자재
 table(29, -24, 5, 1.8);
 shelf(34.04, -20.5, 1.4, 4.2);
@@ -1022,3 +1026,4 @@ for (const c of COLLIDERS) {
     COVER_POINTS.push({ x, z, height, cx: c.x, cz: c.z, room: zoneAt(x, z) });
   }
 }
+

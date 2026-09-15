@@ -35,6 +35,10 @@ export class Hud {
     this._bannerTimer = null;
     this._hitTimer = null;
     this._radioTimer = null;
+    this._radioQueue = [];
+    this._radioActive = null;
+    this._doorVisible = false;
+    this._defuseVisible = false;
     this._subtitleTimer = null;
     this._threatMarks = [];
   }
@@ -295,10 +299,29 @@ export class Hud {
 
   radio(text) {
     if (!text) return;
-    $('radioText').textContent = text;
-    $('radio').classList.remove('hidden');
+    if (this._radioActive?.text === text || this._radioQueue.some(item => item.text === text)) return;
+    this._radioQueue.push({ text, remaining: 8000 });
+    this._syncRadio();
+  }
+
+  _syncRadio() {
+    const blocked = this._doorVisible || this._defuseVisible;
     clearTimeout(this._radioTimer);
-    this._radioTimer = setTimeout(() => $('radio').classList.add('hidden'), 8000);
+    if (this._radioActive?.startedAt != null) {
+      this._radioActive.remaining = Math.max(0, this._radioActive.remaining - (performance.now() - this._radioActive.startedAt));
+      this._radioActive.startedAt = null;
+    }
+    if (blocked) { $('radio').classList.add('hidden'); return; }
+    if (this._radioActive?.remaining <= 0) this._radioActive = null;
+    this._radioActive ||= this._radioQueue.shift();
+    if (!this._radioActive) { $('radio').classList.add('hidden'); return; }
+    $('radioText').textContent = this._radioActive.text;
+    $('radio').classList.remove('hidden');
+    this._radioActive.startedAt = performance.now();
+    this._radioTimer = setTimeout(() => {
+      this._radioActive = null;
+      this._syncRadio();
+    }, this._radioActive.remaining);
   }
 
   setAim(amount, weapon, alive = true) {
@@ -316,6 +339,7 @@ export class Hud {
   /** 해체 진행 바 (근처에 있을 때만) */
   setDefuse(visible, label = '', progress = 0) {
     this.el.defuse.classList.toggle('hidden', !visible);
+    if (this._defuseVisible !== !!visible) { this._defuseVisible = !!visible; this._syncRadio(); }
     this.el.bUse?.classList.toggle('hidden', !visible);
     if (!visible) return;
     this.el.defuseTxt.textContent = label;
@@ -337,6 +361,7 @@ export class Hud {
   setDoor(door, extra = '', actions = {}) {
     const show = !!door;
     this.el.door.classList.toggle('hidden', !show);
+    if (this._doorVisible !== show) { this._doorVisible = show; this._syncRadio(); }
     const { primary = null, peek = false, kick = false } = actions;
     this.el.bDoor?.classList.toggle('hidden', !show || !primary);
     this.el.bKick?.classList.toggle('hidden', !show || !kick);
@@ -406,6 +431,8 @@ export class Hud {
     this.setDead(false);
     this.setAim(0, '');
     clearTimeout(this._radioTimer);
+    this._radioQueue = []; this._radioActive = null;
+    this._doorVisible = this._defuseVisible = false;
     $('radio').classList.add('hidden');
     clearTimeout(this._subtitleTimer);
     if (this.el.subtitle) { this.el.subtitle.style.opacity = '0'; this.el.subtitle.textContent = ''; }
@@ -426,3 +453,4 @@ export function escapeHtml(s) {
     { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
   ));
 }
+
