@@ -425,8 +425,7 @@ export class Game {
     removeEventListener('gameviewportchange', this._resizeHandler);
     for (const [event, fn] of this._socketHandlers || []) this.socket.off(event, fn);
     this.entities?.clear();
-    this.pipeline?.composer.passes.forEach((p) => p.dispose?.());
-    this.pipeline?.composer.dispose();
+    this.pipeline?.dispose();
     const disposed = new Set();
     const release = (resource) => {
       if (resource && !disposed.has(resource)) { disposed.add(resource); resource.dispose?.(); }

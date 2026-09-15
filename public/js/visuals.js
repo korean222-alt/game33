@@ -3,8 +3,12 @@ import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
+import { GTAOPass } from 'three/addons/postprocessing/GTAOPass.js';
+import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
+import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
+import { QUALITY } from './config.js';
 import { MAP, LIGHTS } from './map-data.js';
 import { roomSigns, roomRugs, exteriorWindows, grandHallArt, estatePlaque, WINDOW, ART } from './decor-layout.js';
 
@@ -127,25 +131,152 @@ export function dressRoom(scene, renderer) {
   scene.add(dust); return dust;
 }
 
+/* 실내 색 보정.
+ *
+ *  저택은 형광등 아래 사무실이 아니라 밤중에 남의 집에 들어간 장면이다.
+ *  그늘은 푸르게, 불빛이 닿는 쪽은 노랗게 갈라 놓으면 같은 조명에서도
+ *  공간이 훨씬 깊어 보인다. 대비를 중간 회색(0.18) 축으로 살짝 올리고
+ *  화면 가장자리를 떨어뜨려 시선을 가운데로 모은다.
+ *
+ *  톤매핑(OutputPass) 앞에서 도므로 여기 색은 선형 공간이다. 그래서 대비를
+ *  올릴 때 음수로 내려갈 수 있어 마지막에 잘라 준다. 전체 화면 한 번을
+ *  훑는 것이 전부라 비용은 거의 없다.                                      */
+const ColorGradeShader = {
+  name: 'ColorGrade',
+  uniforms: {
+    tDiffuse:      { value: null },
+    contrast:      { value: 1.08 },
+    saturation:    { value: 1.06 },
+    shadowTint:    { value: new THREE.Vector3(0.84, 0.93, 1.14) },
+    highlightTint: { value: new THREE.Vector3(1.07, 1.00, 0.90) },
+    vignette:      { value: 0.30 },
+  },
+  vertexShader: /* glsl */`
+    varying vec2 vUv;
+    void main() {
+      vUv = uv;
+      gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+    }`,
+  fragmentShader: /* glsl */`
+    uniform sampler2D tDiffuse;
+    uniform float contrast, saturation, vignette;
+    uniform vec3 shadowTint, highlightTint;
+    varying vec2 vUv;
+    void main() {
+      vec4 texel = texture2D(tDiffuse, vUv);
+      vec3 c = texel.rgb;
+      float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+
+      c *= mix(shadowTint, highlightTint, smoothstep(0.0, 0.55, luma));
+      c = (c - 0.18) * contrast + 0.18;
+      c = mix(vec3(luma), c, saturation);
+
+      vec2 d = vUv - 0.5;
+      c *= 1.0 - vignette * dot(d, d) * 2.0;
+
+      gl_FragColor = vec4(max(c, 0.0), texel.a);
+    }`,
+};
+
 export class VisualPipeline {
   constructor(renderer, scene, camera, quality) {
     this.renderer = renderer; this.scene = scene; this.camera = camera;
-    this.composer = new EffectComposer(renderer);
-    this.composer.addPass(new RenderPass(scene, camera));
-    this.bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .24, .45, 1.1);
-    this.composer.addPass(this.bloom); this.composer.addPass(new OutputPass());
+    this.composer = null; this.built = null;
     this.setQuality(quality);
   }
-  setQuality(key) { this.enabled = key === 'high' || key === 'ultra'; this.resize(); }
+
+  /* 합성 단계는 쓰는 품질에서만 만든다.
+   *
+   *  Pass 는 enabled 를 꺼도 렌더 타깃을 놓지 않는다. GTAO 하나만 해도 법선 ·
+   *  깊이 · AO · 잡음제거로 화면 크기 버퍼를 넷 잡고, SMAA 가 셋을 더 잡는다.
+   *  파이프라인 자체는 품질과 무관하게 항상 만들어지므로, 그냥 두면 합성을
+   *  쓰지도 않는 '낮음' 의 폰이 그 VRAM 을 전부 문다.
+   *
+   *  그래서 필요한 단계 구성이 바뀔 때만 합성기를 다시 세운다. 품질 변경은
+   *  드물게 일어나고(설정 변경, 자동 저하) 그때마다 쓰지 않는 버퍼는 놓인다. */
+  setQuality(key) {
+    const q = QUALITY[key] || QUALITY.high;
+    const wanted = (key === 'high' || key === 'ultra')
+      ? { ao: !!q.ao, smaa: !!q.smaa }
+      : null;
+    const same = this.built && wanted && this.built.ao === wanted.ao && this.built.smaa === wanted.smaa;
+    if (!same && !(this.built === null && wanted === null)) {
+      this.dispose();
+      if (wanted) this._build(wanted);
+      this.built = wanted;
+    }
+    this.enabled = !!this.composer;
+    this.resize();
+  }
+
+  _build({ ao, smaa }) {
+    const { renderer, scene, camera } = this;
+    const size = renderer.getSize(new THREE.Vector2());
+    this.composer = new EffectComposer(renderer);
+    this.composer.addPass(new RenderPass(scene, camera));
+
+    /* 접촉 그림자(GTAO).
+     *
+     *  광원 몇 개로는 벽과 바닥이 만나는 모서리, 상자 밑, 문틀 안쪽이 전부
+     *  똑같이 밝아 방이 납작해 보인다. 화면 공간에서 주변 가림 정도를 재어
+     *  그런 자리를 어둡게 깎는다. 저폴리 모델이라도 공간이 붙어 보이는 데
+     *  가장 크게 기여한다. 대신 버퍼를 넷 잡고 잡음까지 걸러야 해서 이
+     *  파이프라인에서 제일 비싸다. 켤 품질은 QUALITY.ao 가 정한다. */
+    if (ao) {
+      this.gtao = new GTAOPass(scene, camera, size.x, size.y);
+      this.gtao.output = GTAOPass.OUTPUT.Default;
+      this.gtao.blendIntensity = 1;
+      this.gtao.updateGtaoMaterial({
+        radius: 2,            // m. 방 하나 크기에 맞춘다. 0.5 쯤으로 좁히면
+                              // 가림이 모서리 선 몇 줄로만 남아 눈에 띄지 않는다.
+        scale: 2,             // 대홀 기준 화면의 7% 가 5% 이상 어두워지는 세기다.
+                              // 더 올리면 모서리에 검은 테가 둘리기 시작한다.
+        thickness: 1,
+        distanceExponent: 1,
+        samples: 16,
+        screenSpaceRadius: false,
+      });
+      this.composer.addPass(this.gtao);
+    }
+
+    this.bloom = new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), .24, .45, 1.1);
+    this.composer.addPass(this.bloom);
+
+    this.grade = new ShaderPass(ColorGradeShader);
+    this.composer.addPass(this.grade);
+
+    this.composer.addPass(new OutputPass());
+
+    /* SMAA 는 톤매핑을 마친 화면에서 가장자리를 찾으므로 OutputPass 뒤에 둔다.
+     * EffectComposer 의 렌더 타깃에는 멀티샘플이 걸려 있지 않아서, 렌더러의
+     * antialias 옵션은 합성을 거치지 않는 1인칭 총에만 먹는다. 월드의 계단
+     * 현상은 여기서만 지울 수 있다. */
+    if (smaa) {
+      this.smaa = new SMAAPass(size.x, size.y);
+      this.composer.addPass(this.smaa);
+    }
+  }
+
+  dispose() {
+    if (!this.composer) return;
+    for (const pass of this.composer.passes) pass.dispose?.();
+    this.composer.dispose();
+    this.composer = null;
+    this.gtao = this.smaa = this.grade = this.bloom = null;
+    this.enabled = false;
+  }
+
   resize() {
+    if (!this.composer) return;
     this.composer.setPixelRatio(this.renderer.getPixelRatio());
     const size = this.renderer.getSize(new THREE.Vector2());
     this.composer.setSize(size.x, size.y);
   }
+
   render() {
     const { renderer, scene, camera } = this;
     camera.layers.set(0);
-    if (this.enabled) this.composer.render(); else renderer.render(scene, camera);
+    if (this.composer) this.composer.render(); else renderer.render(scene, camera);
     // A separate depth buffer preserves self-occlusion on the first-person gun.
     // Shared world materials never have depthTest disabled.
     const background = scene.background; const autoClear = renderer.autoClear;
@@ -157,4 +288,3 @@ export class VisualPipeline {
     renderer.shadowMap.autoUpdate = shadowUpdate;
   }
 }
-

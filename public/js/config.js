@@ -111,6 +111,8 @@ export const QUALITY = {
     pointLights: 3,        // 천장 전구를 몇 개까지 켤지
     antialias: false,
     shadowRadius: 1,
+    ao: false,             // 접촉 그림자(GTAO). 합성을 아예 안 쓰는 품질이다
+    smaa: false,
   },
   medium: {
     label: '보통',
@@ -123,6 +125,8 @@ export const QUALITY = {
     pointLights: 5,
     antialias: false,
     shadowRadius: 2,
+    ao: false,
+    smaa: false,
   },
   high: {
     label: '높음',
@@ -135,6 +139,10 @@ export const QUALITY = {
     pointLights: 8,
     antialias: false,      // 모바일에서는 MSAA 대신 해상도 스케일이 더 효율적
     shadowRadius: 3,
+    ao: false,             // ★ 폰에서 프레임이 버티면 true 로 올려 보세요.
+                           //   구석 그늘이 생겨 방이 깊어 보이지만 이 파이프라인에서
+                           //   제일 비싼 단계라, 실측 없이 기본으로 켜지는 않았습니다.
+    smaa: true,            // 합성 경로에는 MSAA 가 없어서 계단 현상을 이걸로 지운다
   },
   ultra: {
     label: '최고 (PC 전용)',
@@ -145,8 +153,10 @@ export const QUALITY = {
     fogDensity: 0.003,
     anisotropy: 8,
     pointLights: 8,
-    antialias: true,
+    antialias: true,       // 합성을 거치지 않는 1인칭 총에만 먹는다
     shadowRadius: 4,
+    ao: true,
+    smaa: true,
   },
 };
 
@@ -206,9 +216,9 @@ export const COMBAT = {
 
 export const NET = {
   inputHz: 20,            // 서버로 내 위치를 보내는 빈도
-  interpDelayMs: 210,     // 남의 캐릭터를 얼마나 늦게 보여줄지 (부드러움 vs 지연)
-                          // 서버 틱(10Hz = 100ms) 의 두 배. 한 패킷을 놓쳐도
-                          // 보간할 스냅샷이 남아 있어야 캐릭터가 튀지 않는다.
+  interpDelayMs: 110,     // 남의 캐릭터를 얼마나 늦게 보여줄지 (부드러움 vs 지연)
+                          // 서버 틱(20Hz = 50ms) 의 두 배 남짓. 틱을 내리면
+                          // 여기도 같이 올려야 캐릭터가 튀지 않는다.
 };
 
 /* -----------------------------------------------------------------------------
