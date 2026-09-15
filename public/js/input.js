@@ -272,7 +272,10 @@ export class Input {
     this._tapBtn('bDoor', () => { this.door = true; });
     this._tapBtn('bKick', () => { this.kick = true; });
     this._tapBtn('bShout', () => { this.shout = true; });
-    this._tapBtn('bLight', () => { this.lightToggle = true; });
+    // 손전등은 켜고 끄는 버튼이다. 눌린 티(.on)는 실제 손전등 상태를 보고
+    // hud.setFlashlight 가 칠한다 - _tapBtn 처럼 110ms 뒤에 지워 버리면
+    // 켜 두어도 버튼이 꺼진 것처럼 보인다.
+    this._latchBtn('bLight', () => { this.lightToggle = true; });
     this._tapBtn('bNade', () => { this.throwGrenade = true; });
     this._tapBtn('bNadeSel', () => { this.grenadeSlot = -1; });   // -1 = 다음 장비
   }
@@ -295,6 +298,17 @@ export class Input {
     };
     this._listen(el, 'touchend', off);
     this._listen(el, 'touchcancel', off);
+  }
+
+  /** 탭하면 동작만 보내고, 켜짐 표시는 바깥(HUD)이 상태를 보고 칠하는 버튼. */
+  _latchBtn(id, fn) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    this._listen(el, 'touchstart', (e) => {
+      if (!this.enabled) return;
+      fn();
+      e.preventDefault();
+    }, { passive: false });
   }
 
   _tapBtn(id, fn) {

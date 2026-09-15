@@ -30,3 +30,21 @@ test('touch toggles reset internally and visually between matches', () => {
   input.dispose(); input.enable(); ads.dispatchEvent(new Event('touchstart'));
   assert.equal(input.ads, false);
 });
+
+test('손전등 버튼은 켜짐 표시가 남는다 (탭 표시가 110ms 뒤에 지우면 안 된다)', async () => {
+  const light = new Element();
+  elements.set('bLight', light);
+  const input = new Input(new Element(), {}); input.enable();
+
+  light.dispatchEvent(new Event('touchstart', { cancelable: true }));
+  assert.equal(input.consumeLightToggle(), true);
+  assert.equal(input.consumeLightToggle(), false);
+
+  // 실제 손전등 상태는 HUD 가 칠한다. 입력 쪽이 제멋대로 지우면 안 된다.
+  light.classList.add('lit');
+  await new Promise(r => setTimeout(r, 160));
+  assert.equal(light.classes.has('lit'), true, '켜 두었는데 버튼이 꺼진 것처럼 보인다');
+
+  input.disable();
+  input.dispose();
+});

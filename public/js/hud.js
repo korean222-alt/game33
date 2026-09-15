@@ -82,9 +82,45 @@ export class Hud {
     this.el.hud.classList.toggle('hidden', !inGame);
   }
 
+  /**
+   * 터치 조작을 켜고 끈다.
+   *
+   * 조작 띠가 화면 아래에서 실제로 차지하는 높이를 재서 --ctl 에 넣는다.
+   * 문 안내와 무전, 체력/탄약이 그 위에서만 뜨도록 하기 위해서다. 버튼 줄이
+   * 하나 더 접히거나(세로 화면) 기기를 돌리면 높이가 달라지므로 계속 지켜본다.
+   */
   showTouch(on) {
     this.el.touch.classList.toggle('hidden', !on);
     this.el.touch.classList.toggle('on', on);
+    this._watchControlHeight(on);
+  }
+
+  _watchControlHeight(on) {
+    const root = document.documentElement;
+    if (!on) {
+      this._ctlObserver?.disconnect();
+      this._ctlObserver = null;
+      root.style.setProperty('--ctl', '0px');
+      return;
+    }
+    const bar = $('ctlBar');
+    if (!bar) return;
+    const measure = () => {
+      // 조작 띠는 이미 아래 안전 영역만큼 padding 을 먹고 있다. --ctl 은
+      // 안전 영역을 뺀 "버튼이 실제로 덮는" 높이여야 이중으로 밀리지 않는다.
+      const safe = parseFloat(getComputedStyle(root).getPropertyValue('--safe-b')) || 0;
+      const h = Math.max(0, Math.round(bar.getBoundingClientRect().height - safe));
+      root.style.setProperty('--ctl', `${h}px`);
+    };
+    measure();
+    if (typeof ResizeObserver === 'function') {
+      this._ctlObserver?.disconnect();
+      this._ctlObserver = new ResizeObserver(measure);
+      this._ctlObserver.observe(bar);
+    } else {
+      addEventListener('resize', measure);
+      addEventListener('orientationchange', measure);
+    }
   }
 
   /* ---- 매치 시작 시 목표 목록 만들기 ------------------------------------ */
@@ -218,7 +254,11 @@ export class Hud {
       el.classList.toggle('on', !!on);
       el.textContent = on ? '손전등 켜짐 · L' : '손전등 꺼짐 · L';
     }
-    $('bLight')?.classList.toggle('on', !!on);
+    const btn = $('bLight');
+    if (btn) {
+      btn.classList.toggle('lit', !!on);
+      btn.innerHTML = on ? '손전등<br><b>켜짐</b>' : '손전등<br>꺼짐';
+    }
     if (!quiet && on) this.killfeed('손전등 켜짐 — 불빛은 상대도 본다');
   }
 
@@ -246,7 +286,11 @@ export class Hud {
     box.textContent = who ? `${who}  “${text}”` : `“${text}”`;
     box.style.opacity = '1';
     clearTimeout(this._subtitleTimer);
-    this._subtitleTimer = setTimeout(() => { box.style.opacity = '0'; }, ms);
+    // 글자를 지워야 안내 묶음에서 빈 줄로 자리를 차지하지 않는다.
+    this._subtitleTimer = setTimeout(() => {
+      box.style.opacity = '0';
+      setTimeout(() => { if (box.style.opacity === '0') box.textContent = ''; }, 220);
+    }, ms);
   }
 
   radio(text) {
@@ -364,7 +408,7 @@ export class Hud {
     clearTimeout(this._radioTimer);
     $('radio').classList.add('hidden');
     clearTimeout(this._subtitleTimer);
-    if (this.el.subtitle) this.el.subtitle.style.opacity = '0';
+    if (this.el.subtitle) { this.el.subtitle.style.opacity = '0'; this.el.subtitle.textContent = ''; }
     this.setDefuse(false);
     this.setDoor(null);
     this.setPeekView(false);

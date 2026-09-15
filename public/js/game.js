@@ -333,6 +333,7 @@ export class Game {
     s.on('playerReload', (d) => {
       if (!this.matchActive || d.id === this.myId) return;
       this.audio?.reload(d.duration || 2.3, { x: d.x, y: (d.y || 0) + 1.1, z: d.z });
+      this.entities.players.get(d.id)?.rig?.trigger('reload');
     });
 
     s.on('npcArrested', (d) => {
@@ -466,6 +467,7 @@ export class Game {
     this.reloading = false;
     this._reloadAcked = false;
     this._reloadSentAt = 0;
+    this.player.cancelReload();
     this._defusingSite = null;
     this._matchVersion++;
     this.shots.reset();
@@ -567,10 +569,13 @@ export class Game {
     if (me.reloading) this._reloadAcked = true;
     const awaitingAck = this.reloading && !this._reloadAcked
       && performance.now() - (this._reloadSentAt || 0) < RELOAD_ACK_GRACE;
-    if (this.reloading && !me.reloading && !awaitingAck) this.audio?.cancelReload();
+    if (this.reloading && !me.reloading && !awaitingAck) {
+      this.audio?.cancelReload();
+      this.player.cancelReload();
+    }
     this.reloading = !!me.reloading || awaitingAck;
     this.hp = me.hp;
-    if (!me.alive) this.audio?.cancelReload();
+    if (!me.alive) { this.audio?.cancelReload(); this.player.cancelReload(); }
     this.gas = me.gas || 0;
     if (me.grenades) this.grenades = me.grenades;
     if (me.sel && me.sel !== this.selectedGrenade) this.selectedGrenade = me.sel;
@@ -775,6 +780,7 @@ export class Game {
     this._reloadSentAt = performance.now();
     this.hud.setAmmo(this.ammo, this.reserve, true, this.weaponName);
     this.audio?.reload(w.reload);
+    this.player.startReload(w.reload);      // 손에서 탄창을 가는 동작
     this.socket.emit('reload');
   }
 

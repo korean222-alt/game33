@@ -14,6 +14,7 @@ import { PredictionHistory } from './prediction-history.js';
 
 import { createWeaponOptic, disposeOptic } from './weapon-optic.js';
 import { sightPosition } from './viewmodel-layout.js';
+import { reloadPose } from './reload-motion.js';
 
 export class LocalPlayer {
   /**
@@ -52,6 +53,8 @@ export class LocalPlayer {
     this._vmGroup = new THREE.Group();
     this.camera.add(this._vmGroup);
     this.muzzleUntil = 0;
+    // 재장전 동작. duration 이 0 이면 장전 중이 아니다.
+    this._reload = { t: 0, duration: 0 };
 
     this.camera.rotation.order = 'YXZ';
   }
@@ -70,6 +73,7 @@ export class LocalPlayer {
     this.adsAmount = this.bobPhase = this._sprintK = 0;
     this._eye = PLAYER.eyeHeight;
     this.muzzleUntil = 0;
+    this.cancelReload();
     this.spread = COMBAT.spread.idle;
     this._prediction.reset();
   }
@@ -236,8 +240,28 @@ export class LocalPlayer {
     }
   }
 
+  /* ---- 재장전 동작 -------------------------------------------------------
+   * 총이 손에서 움직이는 것이 보여야 장전이 어디쯤인지 눈으로 안다.
+   * 실제 장전 시간(무기마다 다르다)에 맞춰 한 번만 재생한다.
+   * ----------------------------------------------------------------------- */
+  startReload(seconds) {
+    this._reload = { t: 0, duration: Math.max(0.2, seconds || 0) };
+  }
+
+  cancelReload() {
+    this._reload = { t: 0, duration: 0 };
+  }
+
+  get reloadProgress() {
+    return this._reload.duration > 0 ? this._reload.t : 0;
+  }
+
   /* ---- 1인칭 총 --------------------------------------------------------- */
   _applyViewmodel(dt) {
+    if (this._reload.duration > 0) {
+      this._reload.t += dt / this._reload.duration;
+      if (this._reload.t >= 1) this.cancelReload();
+    }
     if (!this.viewmodel) return;
     const vm = VIEWMODEL[this.weapon] || VIEWMODEL.rifle;
 
@@ -254,15 +278,19 @@ export class LocalPlayer {
 
     const sway = this.moving ? Math.sin(this.bobPhase) * 0.008 * (1 - a) : 0;
 
+    // 재장전 동작은 조준 자세보다 우선한다. 탄창을 가는 동안에는 조준선이
+    // 흐트러지는 게 맞고, 그래야 "지금 쏠 수 없다"가 눈으로 보인다.
+    const rl = reloadPose(this.reloadProgress);
+
     this.viewmodel.position.set(
-      lerp(p[0], ap[0], a) + sway,
-      lerp(p[1], ap[1], a) - this._sprintK * 0.10 * (1 - a) + Math.sin(this.bobPhase * 2) * 0.004 * (1 - a),
-      lerp(p[2], ap[2], a),
+      lerp(p[0], ap[0], a) + sway + rl.pos[0],
+      lerp(p[1], ap[1], a) - this._sprintK * 0.10 * (1 - a) + Math.sin(this.bobPhase * 2) * 0.004 * (1 - a) + rl.pos[1],
+      lerp(p[2], ap[2], a) + rl.pos[2],
     );
     this.viewmodel.rotation.set(
-      lerp(r[0], ar[0], a) + this._sprintK * 0.35 * (1 - a),
-      lerp(r[1], ar[1], a),
-      lerp(r[2], ar[2], a) + this._sprintK * 0.30 * (1 - a),
+      lerp(r[0], ar[0], a) + this._sprintK * 0.35 * (1 - a) + rl.rot[0],
+      lerp(r[1], ar[1], a) + rl.rot[1],
+      lerp(r[2], ar[2], a) + this._sprintK * 0.30 * (1 - a) + rl.rot[2],
     );
     const sc = vm.scale ?? 1;
     this.viewmodel.scale.setScalar(sc);

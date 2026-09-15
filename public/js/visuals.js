@@ -5,7 +5,8 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 
-import { MAP, ROOMS, LIGHTS } from './map-data.js';
+import { MAP, LIGHTS } from './map-data.js';
+import { roomSigns, roomRugs, exteriorWindows, grandHallArt, estatePlaque, WINDOW, ART } from './decor-layout.js';
 
 export function roomMaterials() {
   const loader = new THREE.TextureLoader();
@@ -45,60 +46,85 @@ function sign(scene, text, caption, x, y, z, color, width = 2.2, rotation = 0) {
 }
 
 export function dressRoom(scene, renderer) {
-  const pmrem=new THREE.PMREMGenerator(renderer),env=new RoomEnvironment();
-  const target=pmrem.fromScene(env,.04);
-  scene.environment=target.texture;scene.environmentIntensity=.5;
-  scene.userData.environmentTarget=target;env.dispose();pmrem.dispose();
-  const brass=new THREE.MeshStandardMaterial({color:0xbfa16b,roughness:.3,metalness:.8});
-  const wood=new THREE.MeshStandardMaterial({color:0x312017,roughness:.65});
-  const glow=new THREE.MeshStandardMaterial({color:0xffe9bf,emissive:0xffd294,emissiveIntensity:2.4});
-  const box=(x,y,z,w,h,d,material)=>{
-    const m=new THREE.Mesh(new THREE.BoxGeometry(w,h,d),material);
-    m.position.set(x,y,z);m.castShadow=m.receiveShadow=true;scene.add(m);return m;
+  const pmrem = new THREE.PMREMGenerator(renderer), env = new RoomEnvironment();
+  const target = pmrem.fromScene(env, .04);
+  scene.environment = target.texture; scene.environmentIntensity = .5;
+  scene.userData.environmentTarget = target; env.dispose(); pmrem.dispose();
+
+  const brass = new THREE.MeshStandardMaterial({ color: 0xbfa16b, roughness: .3, metalness: .8 });
+  const wood = new THREE.MeshStandardMaterial({ color: 0x312017, roughness: .65 });
+  const glow = new THREE.MeshStandardMaterial({ color: 0xffe9bf, emissive: 0xffd294, emissiveIntensity: 2.4 });
+  const box = (x, y, z, w, h, d, material) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), material);
+    m.position.set(x, y, z); m.castShadow = m.receiveShadow = true; scene.add(m); return m;
   };
-  // Fine coffer lines, recessed in the ceiling.
-  for(let x=-21;x<=21;x+=6)box(x,6.94,0,.1,.1,35.6,wood);
-  for(let z=-15;z<=15;z+=6)box(0,6.94,z,47.6,.1,.1,wood);
-  for(const L of LIGHTS.filter(L => L.kind !== 'lamp')){
-    box(L.x,6.2,L.z,.07,1.5,.07,brass);
-    const ring=new THREE.Mesh(new THREE.TorusGeometry(1.15,.035,6,32),brass);
-    ring.rotation.x=Math.PI/2;ring.position.set(L.x,L.y-.15,L.z);scene.add(ring);
-    for(let i=0;i<8;i++){
-      const a=i*Math.PI/4,x=L.x+Math.cos(a)*1.15,z=L.z+Math.sin(a)*1.15;
-      box(x,L.y,z,.09,.3,.09,glow);
+
+  const inner = MAP.interior;
+  const spanX = inner.maxX - inner.minX, spanZ = inner.maxZ - inner.minZ;
+
+  // 천장 우물반자. 실내 전체를 덮는다 (예전에는 저택 절반 크기에서 끊겼다).
+  for (let x = inner.minX + 3; x <= inner.maxX - 3; x += 6) box(x, 6.94, 0, .1, .1, spanZ - .4, wood);
+  for (let z = inner.minZ + 3; z <= inner.maxZ - 3; z += 6) box(0, 6.94, z, spanX - .4, .1, .1, wood);
+
+  // 샹들리에. 줄기는 천장에서 고리까지 이어 놓는다 - 예전에는 등 높이와 상관없이
+  // y=6.2 에 고정이라, 낮게 달린 복도등에서는 줄기와 고리가 따로 떠 있었다.
+  for (const L of LIGHTS.filter((l) => l.kind !== 'lamp')) {
+    const ringY = L.y - .15;
+    // 줄기 꼭대기는 천장 속으로 6cm 밀어 넣는다. 천장면(y = MAP.height)과 딱
+    // 맞추면 깊이 값이 같아져 카메라가 움직일 때마다 깜빡인다(z-fighting).
+    const stem = Math.max(.2, MAP.height + .06 - ringY);
+    box(L.x, ringY + stem / 2, L.z, .07, stem, .07, brass);
+    const radius = 1.15;
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, .035, 6, 32), brass);
+    ring.rotation.x = Math.PI / 2; ring.position.set(L.x, ringY, L.z); scene.add(ring);
+    for (let i = 0; i < 8; i++) {
+      const a = i * Math.PI / 4;
+      box(L.x + Math.cos(a) * radius, L.y, L.z + Math.sin(a) * radius, .09, .3, .09, glow);
     }
   }
-  // Flush rugs and brass borders, no invisible floor obstacles.
-  for(const r of ROOMS){
-    const mat=new THREE.MeshStandardMaterial({color:r.x===0?0x58232b:0x233d39,roughness:.98});
-    const w=r.x===0?7:r.w-5,d=r.x===0?26:r.d-3;
-    const rug=new THREE.Mesh(new THREE.PlaneGeometry(w,d),mat);
-    rug.rotation.x=-Math.PI/2; rug.position.set(r.x,.008,r.z);scene.add(rug);
-    for(const x of [-w/2+.15,w/2-.15])box(r.x+x,.012,r.z,.025,.005,d-.3,brass);
-    for(const z of [-d/2+.15,d/2-.15])box(r.x,.012,r.z+z,w-.3,.005,.025,brass);
+
+  // 양탄자. 방 안에 들어가는 크기로만 깐다 - 예전 현관홀 양탄자는 26m 라
+  // 벽을 뚫고 앞마당까지 삐져나가 있었다.
+  for (const r of roomRugs()) {
+    const mat = new THREE.MeshStandardMaterial({ color: r.grand ? 0x58232b : 0x233d39, roughness: .98 });
+    const rug = new THREE.Mesh(new THREE.PlaneGeometry(r.w, r.d), mat);
+    rug.rotation.x = -Math.PI / 2; rug.position.set(r.x, .008, r.z); scene.add(rug);
+    for (const x of [-r.w / 2 + .15, r.w / 2 - .15]) box(r.x + x, .012, r.z, .025, .005, r.d - .3, brass);
+    for (const z of [-r.d / 2 + .15, r.d / 2 - .15]) box(r.x, .012, r.z + z, r.w - .3, .005, .025, brass);
   }
-  sign(scene,'RAVENWOOD','ESTATE / TACTICAL OPERATIONS',0,4.4,-17.75,'#d6bc82',6);
-  for(const r of ROOMS.slice(1)){
-    // Room identification at the wing entrance, above the doorway.
-    sign(scene,r.name,r.label,r.x<0?-9.02:9.02,3.8,r.z,'#d6bc82',3,r.x<0?Math.PI/2:-Math.PI/2);
+
+  // 방 이름표 / 저택 현판 / 창문 / 액자는 decor-layout 이 벽에서 찾아 준 자리에만.
+  for (const s of roomSigns()) sign(scene, s.name, s.label, s.x, s.y, s.z, '#d6bc82', s.width, s.ry);
+  const plaque = estatePlaque();
+  if (plaque) sign(scene, 'RAVENWOOD', 'ESTATE / TACTICAL OPERATIONS', plaque.x, plaque.y, plaque.z, '#d6bc82', plaque.width, plaque.ry);
+
+  const glass = new THREE.MeshStandardMaterial({
+    color: 0xadc9d6, emissive: 0x84aabe, emissiveIntensity: .65, roughness: .3, metalness: .2,
+  });
+  for (const win of exteriorWindows()) {
+    const across = WINDOW.depth, flat = win.axis === 'x';
+    box(win.x, win.y, win.z, flat ? across : WINDOW.w, WINDOW.h, flat ? WINDOW.w : across, glass);
+    box(win.x, win.y, win.z, flat ? across + .01 : .07, WINDOW.h, flat ? .07 : across + .01, brass);
+    box(win.x, win.y, win.z, flat ? across + .01 : WINDOW.w, .07, flat ? WINDOW.w : across + .01, brass);
   }
-  // Tall luminous windows are flush with the exterior walls.
-  const glass=new THREE.MeshStandardMaterial({color:0xadc9d6,emissive:0x84aabe,emissiveIntensity:.65,roughness:.3,metalness:.2});
-  for(const x of [-23.79,23.79])for(const z of [-14,-10,-2,2,10,14]){
-    box(x,3.75,z,.015,3.4,2.3,glass);
-    box(x,3.75,z,.02,3.4,.065,brass);
-    box(x,3.75,z,.02,.065,2.3,brass);
+
+  for (const a of grandHallArt()) {
+    box(a.x, a.y, a.z, .06, ART.h, ART.w, brass);
+    box(a.x + a.side * .03, a.y, a.z, .035, ART.h - .2, ART.w - .2,
+      new THREE.MeshStandardMaterial({ color: a.tone, roughness: .95 }));
   }
-  // Framed wall art: unlit pigments with warm brass frames.
-  for(const x of [-20,-13,13,20]){
-    box(x,3.7,17.76,2.4,1.7,.06,brass);
-    box(x,3.7,17.71,2.2,1.5,.035,new THREE.MeshStandardMaterial({color:x<0?0x263e42:0x523b31,roughness:.95}));
+
+  const positions = new Float32Array(160 * 3);
+  for (let i = 0; i < 160; i++) {
+    positions[i * 3] = Math.sin(i * 78.23) * (spanX / 2 - 2);
+    positions[i * 3 + 1] = .3 + (i % 29) * .19;
+    positions[i * 3 + 2] = Math.cos(i * 19.8) * (spanZ / 2 - 2);
   }
-  const positions=new Float32Array(120*3);
-  for(let i=0;i<120;i++){positions[i*3]=Math.sin(i*78.23)*23;positions[i*3+1]=.3+(i%29)*.19;positions[i*3+2]=Math.cos(i*19.8)*17;}
-  const dust=new THREE.Points(new THREE.BufferGeometry().setAttribute('position',new THREE.BufferAttribute(positions,3)),
-    new THREE.PointsMaterial({color:0xf2dfba,size:.016,transparent:true,opacity:.18,depthWrite:false}));
-  scene.add(dust);return dust;
+  const dust = new THREE.Points(
+    new THREE.BufferGeometry().setAttribute('position', new THREE.BufferAttribute(positions, 3)),
+    new THREE.PointsMaterial({ color: 0xf2dfba, size: .016, transparent: true, opacity: .18, depthWrite: false }),
+  );
+  scene.add(dust); return dust;
 }
 
 export class VisualPipeline {

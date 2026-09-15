@@ -56,6 +56,8 @@ const OUTER = 0.4, INNER = 0.3, FENCE = 0.3;
  * ========================================================================== */
 export const WALLS = [];
 export const DOORWAYS = [];
+/** 문짝 없는 아치. 방 이름표를 아치 위에 거는 데 쓴다(문과 같은 자리). */
+export const ARCHES = [];
 
 /**
  * @param axis      'x' 면 x=at 에 서서 z 로 뻗는 벽, 'z' 면 z=at 에 서서 x 로 뻗는 벽
@@ -80,7 +82,15 @@ function run(axis, at, from, to, thickness, height, gaps = []) {
     if (!gap.door && !gap.arch) continue;
     // 문(아치) 위쪽 벽. 없으면 옆방을 넘겨다볼 수 있다.
     place(gap.at - gap.span / 2, cursor, MAP.doorHeight, height - MAP.doorHeight);
-    if (!gap.door) continue;
+    if (!gap.door) {
+      ARCHES.push({
+        axis, span: gap.span, thickness,
+        x: axis === 'x' ? at : gap.at,
+        z: axis === 'x' ? gap.at : at,
+        link: gap.link || [],
+      });
+      continue;
+    }
     DOORWAYS.push({
       id: gap.door, axis, span: gap.span, thickness,
       x: axis === 'x' ? at : gap.at,
@@ -125,7 +135,7 @@ run('z', -15, -35, 35, INNER, MAP.height, [
   /* 계단홀은 아치 세 짝으로 열려 있다. 가운데는 계단이 그대로 올라가므로,
    * 걸어 들어가려면 양옆 아치로 돌아야 한다. */
   { at: -7, span: 2.6, arch: true },
-  { at: 0, span: 3.2, arch: true },
+  { at: 0, span: 3.2, arch: true, link: ['NORTH CORRIDOR', 'STAIR HALL'] },
   { at: 7, span: 2.6, arch: true },
   { at: 17, span: 1.8, door: 'corr-conservatory', link: ['NORTH CORRIDOR', 'CONSERVATORY'] },
   { at: 29, span: 1.8, door: 'corr-workshop', link: ['NORTH CORRIDOR', 'WORKSHOP'], hinge: -1 },
@@ -164,7 +174,7 @@ run('z', 11, -35, 35, INNER, MAP.height, [
 /* ---- 남 복도 ↔ 남쪽 방 ---------------------------------------------------- */
 run('z', 15, -35, 35, INNER, MAP.height, [
   { at: -23, span: 1.8, door: 'corr-dining', link: ['SOUTH CORRIDOR', 'DINING ROOM'] },
-  { at: 0, span: 3.2, arch: true },                   // 현관에서 복도로 나가는 아치
+  { at: 0, span: 3.2, arch: true, link: ['SOUTH CORRIDOR', 'ENTRANCE HALL'] },   // 현관에서 복도로 나가는 아치
   { at: 23, span: 1.8, door: 'corr-ballroom', link: ['SOUTH CORRIDOR', 'BALLROOM'], hinge: -1 },
 ]);
 
