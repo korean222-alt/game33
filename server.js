@@ -432,7 +432,10 @@ function makeWorld(room, dt, io) {
     },
     // 경고를 듣고도 덤비는 자. 화면과 소리로 바로 알려 줘야 대응할 수 있다.
     onDefy: (npc) => {
-      io.to(room.code).emit('npcDefy', { id: npc.id, hostage: !!npc.hostage, ...at3(npc) });
+      // holdingHostage: 인질을 붙잡고 버티는 자 (인질 본인이 아니다)
+      io.to(room.code).emit('npcDefy', {
+        id: npc.id, holdingHostage: npc.kind !== 'civilian' && !!npc.hostage, ...at3(npc),
+      });
     },
   };
 }
@@ -780,12 +783,16 @@ function completeInteraction(room, player, target, io) {
 /* ========================================================================== *
  *  구두 경고 (비살상 압박)
  * ========================================================================== */
-function shout(room, player, io) {
+/**
+ * @param line  외친 대사의 번호. 대사 문구 자체는 클라이언트가 갖고 있다 - 글을
+ *              그대로 받아 넘기면 남의 화면에 아무 글이나 띄울 수 있다.
+ */
+function shout(room, player, io, line = 0) {
   const t = now();
   if (t - player.lastShout < SHOUT_COOLDOWN) return;
   player.lastShout = t;
   emitNoise(room, player.x, player.z, NOISE.shout, 'shout', player.id);
-  io.to(room.code).emit('playerShout', { id: player.id, ...at3(player) });
+  io.to(room.code).emit('playerShout', { id: player.id, line, ...at3(player) });
 
   const world = makeWorld(room, 0, io);
   const colliders = room.doors.colliders();
@@ -1017,10 +1024,21 @@ function cancelBriefing(room, io) {
   io.to(room.code).emit('briefingCancelled');
 }
 
+/*
+ * 스냅샷에 실어 보내는 NPC 정보.
+ *
+ * 서버 안에서 npc.hostage 는 두 가지 뜻으로 쓰인다.
+ *   - 민간인의 hostage  = 내가 붙잡혀 있다            (인질 본인)
+ *   - 용의자의 hostage  = 내가 누구를 붙잡고 있다     (인질범)
+ * 예전에는 이 둘을 hostage 한 필드로 합쳐 보냈다. 그래서 인질을 붙잡은 주요
+ * 용의자의 머리 위에 '인질' 이라는 이름표가 붙었다. 뜻이 다른 값이니 따로 보낸다.
+ */
 const npcPublic = (n) => ({
   id: n.id, kind: n.kind, x: +n.x.toFixed(2), y: +n.y.toFixed(2), z: +n.z.toFixed(2),
   yaw: +n.yaw.toFixed(2), hp: Math.max(0, n.hp), maxHp: n.maxHp,
-  state: n.state, hostage: !!n.hostage,
+  state: n.state,
+  hostage: n.kind === 'civilian' && !!n.hostage,        // 붙잡혀 있는 시민
+  holdingHostage: n.kind !== 'civilian' && !!n.hostage, // 시민을 방패로 삼은 자
 });
 
 function startMatch(room, io) {
@@ -1374,9 +1392,10 @@ io.on('connection', (socket) => {
     cb?.({ ok, grenades: me.grenades });
   });
 
-  socket.on('shout', () => {
+  socket.on('shout', (payload) => {
     if (!me || !room || room.state !== 'active' || !me.alive) return;
-    shout(room, me, io);
+    const line = Number(payload?.line);
+    shout(room, me, io, Number.isInteger(line) && line >= 0 && line < 16 ? line : 0);
   });
 
   socket.on('ping:rtt', (t0, cb) => cb?.(t0));

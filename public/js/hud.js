@@ -29,11 +29,13 @@ export class Hud {
       door: $('door'), doorTxt: $('doorTxt'), doorActions: $('doorActions'),
       nade: $('nade'), nadeName: $('nadeName'), nadeCount: $('nadeCount'),
       flash: $('flash'), gas: $('gas'), threat: $('threat'), peek: $('peek'),
+      subtitle: $('subtitle'),
     };
     this.sites = new Map();
     this._bannerTimer = null;
     this._hitTimer = null;
     this._radioTimer = null;
+    this._subtitleTimer = null;
     this._threatMarks = [];
   }
 
@@ -204,6 +206,26 @@ export class Hud {
     this._bannerTimer = setTimeout(() => { this.el.banner.style.opacity = '0'; }, ms);
   }
 
+  /**
+   * 대사 자막.
+   *
+   * 대사는 영어로 외친다. 기기에 영어 목소리가 없으면 말 자체가 안 나오고,
+   * 총소리 한가운데서는 들려도 놓친다. 그래서 한 줄씩 깔아 준다.
+   *
+   * 예전에 자막을 걷어낸 이유는 화면 한가운데를 가렸기 때문이었다. 그래서 이번에는
+   * 조준선에서 멀리 떨어진 아래쪽에, 작게 둔다.
+   *
+   * @param who   말한 사람 ('ME' / 'SUSPECT' 등). 비우면 대사만 나온다.
+   */
+  subtitle(text, who = '', ms = 2600) {
+    const box = this.el.subtitle;
+    if (!box || !text) return;
+    box.textContent = who ? `${who}  “${text}”` : `“${text}”`;
+    box.style.opacity = '1';
+    clearTimeout(this._subtitleTimer);
+    this._subtitleTimer = setTimeout(() => { box.style.opacity = '0'; }, ms);
+  }
+
   radio(text) {
     if (!text) return;
     $('radioText').textContent = text;
@@ -318,6 +340,8 @@ export class Hud {
     this.setAim(0, '');
     clearTimeout(this._radioTimer);
     $('radio').classList.add('hidden');
+    clearTimeout(this._subtitleTimer);
+    if (this.el.subtitle) this.el.subtitle.style.opacity = '0';
     this.setDefuse(false);
     this.setDoor(null);
     this.setPeekView(false);

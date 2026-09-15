@@ -36,7 +36,15 @@ const WORK_SOUND_GAP = 420;   // 길게 누르는 작업의 소리 간격(ms)
 const HURT_VOICE_GAP = 320;   // 같은 사람의 비명이 겹치지 않게
 const SPEECH_RANGE = 16;      // 말소리가 들리는 거리(m)
 
-/* 대사. 입 밖으로 나가는 말이라 영어로 한다. 화면에는 띄우지 않는다. */
+/*
+ * 대사.
+ *
+ * 입 밖으로 나가는 말은 전부 영어로 한다(브라우저 음성 합성이 읽는다). 뜻은 옆에
+ * 적어 둔다. 말이 들리든 안 들리든 아래쪽에 자막 한 줄이 같이 깔린다.
+ *
+ * 고함은 번호로 주고받는다. 텍스트를 그대로 서버에 보내면 남이 아무 글이나 내
+ * 화면에 띄울 수 있으니, 목록의 번호만 오간다.
+ */
 const SHOUT_LINES = [
   'Police! Drop the weapon!',          // 경찰이다! 무기 버려!
   'Hands up! Get down now!',           // 손 들어! 엎드려!
@@ -51,7 +59,11 @@ const DEFY_LINES = [
   "You'll have to come get me!",       // 올 테면 와 봐!
   'Never! Take them down!',            // 어림없다! 쏴 버려!
 ];
-const pickLine = (lines) => lines[Math.floor(Math.random() * lines.length)];
+const pickIndex = (lines) => Math.floor(Math.random() * lines.length);
+const pickLine = (lines) => lines[pickIndex(lines)];
+/** 남이 보내온 번호. 범위를 벗어나면 첫 줄로 접어 둔다. */
+const shoutLine = (index) => SHOUT_LINES[
+  Number.isInteger(index) && index >= 0 ? index % SHOUT_LINES.length : 0];
 
 export class Game {
   constructor(socket, hud) {
@@ -292,25 +304,26 @@ export class Game {
     s.on('npcSurrender', (d) => {
       this.hud.killfeed('적 항복 — F 길게 눌러 체포');
       if (!Number.isFinite(d?.x)) return;
-      this.audio?.scream(d, 'surrender', this._occluded(d));
-      this._say(pickLine(SURRENDER_LINES), d, { pitch: 1.15, rate: 1.15 });
+      const spoke = this._say(pickLine(SURRENDER_LINES), d, { pitch: 1.15, rate: 1.1 }, 'SUSPECT');
+      if (!spoke) this.audio?.scream(d, 'surrender', this._occluded(d));
     });
 
-    // 경고를 무시하고 덤비는 자. 화면 글자 대신 소리와 방향 표시로 알린다.
+    // 경고를 무시하고 덤비는 자. 소리와 방향 표시로 알린다.
     s.on('npcDefy', (d) => {
       if (!Number.isFinite(d?.x)) return;
-      this.audio?.scream(d, 'defy', this._occluded(d));
-      this._say(pickLine(DEFY_LINES), d, { pitch: 0.85, rate: 1.1 });
+      const spoke = this._say(pickLine(DEFY_LINES), d, { pitch: 0.85, rate: 1.1 }, 'SUSPECT');
+      if (!spoke) this.audio?.scream(d, 'defy', this._occluded(d));
       this.hud.threat(this._bearingTo(d.x, d.z), 'spot', 1800);
     });
 
     // 내가 외친 경고의 결과. 아무도 못 들었으면 그것도 알려 준다.
     s.on('shoutResult', (d) => this._reportShout(d));
 
-    // 다른 대원의 고함
+    // 다른 대원의 고함. 그 대원이 외친 줄 번호가 같이 온다.
     s.on('playerShout', (d) => {
       if (!this.matchActive || d.id === this.myId) return;
-      this.audio?.scream(d, 'shout', this._occluded(d));
+      const spoke = this._say(shoutLine(d.line), d, { rate: 1.15, pitch: 0.95 }, 'TEAM');
+      if (!spoke) this.audio?.scream(d, 'shout', this._occluded(d));
     });
 
     // 다른 대원의 재장전. 옆에서 나는 소리로 팀의 상태를 안다.
@@ -920,21 +933,23 @@ export class Game {
   }
 
   /* ---- 목소리 ------------------------------------------------------------ *
-   *  구두 경고는 실제로 들려야 압박이 된다. 브라우저 음성 합성으로 영어로
-   *  외치고, 무슨 뜻인지는 화면에 같이 띄운다.
-   * ----------------------------------------------------------------------- */
-  /**
-   * 구두 경고.
+   *  구두 경고는 실제로 들려야 압박이 된다. 브라우저 음성 합성이 영어로 외치고,
+   *  아래쪽에 자막 한 줄을 같이 깐다.
    *
-   * 화면에는 아무것도 띄우지 않는다. 자막이 뜨면 시야 한가운데를 가리고,
-   * 어차피 이건 "내가 소리를 질렀다" 는 행동이라 귀로 확인하는 편이 맞다.
-   */
+   *  말이 실제로 발음될 때는 목소리 합성음(scream 의 shout/defy/surrender)을
+   *  겹치지 않는다. 그 소리는 모음만 있는 웅얼거림이라, 대사 위에 깔리면
+   *  대사까지 같이 우물거리는 소리로 들린다. 말이 안 나올 때 — 영어 목소리가
+   *  없는 기기, 또는 너무 멀거나 벽 너머라 말이 안 들릴 때 — 만 그 소리를 낸다.
+   * ----------------------------------------------------------------------- */
+  /** 구두 경고. */
   _shout(now) {
     if (now - (this._lastShoutAt || 0) < SHOUT_GAP) return;
     this._lastShoutAt = now;
-    this.audio?.scream(null, 'shout');
-    this.audio?.speak(pickLine(SHOUT_LINES), { rate: 1.15, pitch: 0.95 });
-    this.socket.emit('shout');
+    const index = pickIndex(SHOUT_LINES);
+    const line = SHOUT_LINES[index];
+    this.hud.subtitle(line, 'ME');
+    if (!this.audio?.speak(line, { rate: 1.15, pitch: 0.95 })) this.audio?.scream(null, 'shout');
+    this.socket.emit('shout', { line: index });
   }
 
   /**
@@ -947,19 +962,26 @@ export class Game {
   }
 
   /**
-   * 말 한마디. 가깝고 벽이 없을 때만 발음한다.
-   * 화면에는 남기지 않는다 — 대사는 소리로만 듣는다.
+   * 남의 말 한마디. 가깝고 벽이 없을 때만 들린다.
+   *
+   * 들리는 자리면 자막을 같이 깔고, 음성 합성이 실제로 읽었는지를 돌려준다.
+   * 못 읽었으면 부르는 쪽에서 대신 목소리 소리를 낸다.
+   *
+   * @returns {boolean} 대사가 실제로 발음됐는가
    */
-  _say(line, position, opts = {}) {
-    if (!line) return;
-    if (!position) { this.audio?.speak(line, opts); return; }
-    const distance = Math.hypot(
-      position.x - this.camera.position.x, position.z - this.camera.position.z);
-    const t = performance.now();
-    if (distance > SPEECH_RANGE || t - this._lastSpeech < 900) return;
-    if (this._occluded(position)) return;
-    this._lastSpeech = t;
-    this.audio?.speak(line, opts);
+  _say(line, position, opts = {}, who = '') {
+    if (!line) return false;
+    if (position) {
+      if (!Number.isFinite(position.x) || !Number.isFinite(position.z)) return false;
+      const distance = Math.hypot(
+        position.x - this.camera.position.x, position.z - this.camera.position.z);
+      const t = performance.now();
+      if (distance > SPEECH_RANGE || t - this._lastSpeech < 900) return false;
+      if (this._occluded(position)) return false;
+      this._lastSpeech = t;
+    }
+    this.hud.subtitle(line, who);
+    return !!this.audio?.speak(line, opts);
   }
 
   /** 비명. 같은 사람이 연사에 맞을 때 소리가 겹치지 않게 간격을 둔다. */

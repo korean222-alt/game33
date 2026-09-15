@@ -102,6 +102,13 @@ test('two clients: readiness gate, shot validation, doors, 장비, 단계, room 
   assert.equal(match.doors.length, DOORWAYS.length);
   assert.ok(match.npcs.some((n) => n.kind === 'hvt'), '주요 용의자가 있다');
   assert.ok(match.npcs.some((n) => n.id === 'hostage'), '인질이 있다');
+  // 인질은 붙잡힌 시민이다. 그를 붙잡고 있는 주요 용의자는 인질이 아니다.
+  const hostageNpc = match.npcs.find((n) => n.id === 'hostage');
+  const hvtNpc = match.npcs.find((n) => n.kind === 'hvt');
+  assert.equal(hostageNpc.hostage, true, '인질 본인에게만 hostage 가 붙는다');
+  assert.equal(hostageNpc.holdingHostage, false);
+  assert.equal(hvtNpc.hostage, false, '인질범은 인질이 아니다');
+  assert.equal(hvtNpc.holdingHostage, true, '인질범은 인질을 붙잡고 있다');
   assert.equal(match.evidence.length, 3);
   assert.equal(match.objectives.id, 'approach');
   assert.ok(match.objectives.list.length >= 2);

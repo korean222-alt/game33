@@ -26,6 +26,9 @@ export class GameAudio {
     this.reloadSources = new Set();
     this.loops = new Map();
     this.speechEnabled = true;
+    this._englishVoiceCache = null;
+    this._speechPrimed = false;
+    this._badVoices = new Set();   // 골랐지만 소리가 나지 않았던 목소리
     this.blocked = false;
     this.position = { x: 0, y: 0, z: 0 };
     this.yaw = 0;
@@ -53,6 +56,8 @@ export class GameAudio {
 
   async unlock() {
     if (!this.enabled || this.closed) return;
+    // 목소리 목록은 준비되는 데 시간이 걸린다. 첫 제스처에 미리 불러 둔다.
+    this._primeSpeech();
     try {
       if (!this.context) {
         this.context = this.contextFactory();
@@ -373,9 +378,10 @@ export class GameAudio {
       death: { duration: 1.05, level: 0.45, pitch: [330, 250, 120], formants: [520, 980] },
       panic: { duration: 0.62, level: 0.38, pitch: [520, 720, 430], formants: [900, 1500] },
       cuffed: { duration: 0.44, level: 0.32, pitch: [250, 300, 190], formants: [600, 1050] },
-      // 구두 경고를 외치는 소리 (말은 speak 가 따로 한다)
+      /* 아래 셋은 "말"이 아니라 말 대신 내는 소리다. 이 소리는 모음만 있는
+       * 웅얼거림이라서, 대사가 실제로 발음될 때는(speak 가 true) 겹쳐 내지
+       * 않는다. 영어 목소리가 없거나 너무 멀어 말이 안 들릴 때만 쓴다. */
       shout: { duration: 0.42, level: 0.5, pitch: [300, 430, 260], formants: [720, 1250] },
-      // 경고를 듣고도 덤비는 소리
       defy: { duration: 0.55, level: 0.55, pitch: [260, 400, 320], formants: [660, 1150] },
       surrender: { duration: 0.6, level: 0.4, pitch: [380, 300, 240], formants: [700, 1180] },
     };
@@ -472,21 +478,94 @@ export class GameAudio {
     this._voice(bus, { at: 0.16, duration: 0.2, level: 0.14, frequency: 1800 });
   }
 
+  /* ----------------------------------------------------------------------- *
+   *  말소리
+   *
+   *  대사가 "우물우물" 들렸던 이유가 여기 있었다. utterance.lang 에 'en-US' 를
+   *  적어 두기만 하고 목소리(voice)를 고르지 않으면, 브라우저는 그냥 기본 목소리로
+   *  읽는다. 한국어 환경의 브라우저에서는 그게 한국어 목소리라서 "Police! Drop the
+   *  weapon!" 을 한글 발음 규칙으로 뭉개 읽는다 - 그게 그 웅얼거림이다.
+   *
+   *  그래서 영어 목소리를 직접 찾아 지정하고, 영어 목소리가 아예 없는 기기에서는
+   *  말하지 않는다(한국어 목소리로 영어를 읽느니 자막이 낫다).
+   * ----------------------------------------------------------------------- */
+
   /**
-   * 말소리. 브라우저에 내장된 음성 합성을 쓴다(내려받는 파일 없음).
-   * 구두 경고는 실제로 들려야 압박이 된다. 자막은 HUD 가 따로 보여 준다.
+   * 목소리 목록을 미리 불러 둔다.
+   *
+   * Chrome 은 getVoices() 를 처음 부를 때 빈 배열을 주고, 목록이 준비되면
+   * voiceschanged 를 쏜다. 첫 경고를 외칠 때 목록이 비어 있으면 목소리를 못 고르므로
+   * 소리를 켜는 시점(첫 제스처)에 미리 한 번 찔러 둔다.
    */
-  speak(text, { rate = 1.1, pitch = 1, volume = 1, lang = 'en-US' } = {}) {
+  _primeSpeech() {
+    const synth = globalThis.speechSynthesis;
+    if (!synth || this._speechPrimed) return;
+    this._speechPrimed = true;
+    try {
+      synth.getVoices();
+      synth.addEventListener?.('voiceschanged', () => { this._englishVoiceCache = null; });
+    } catch { /* 음성 합성이 없어도 게임은 돌아간다 */ }
+  }
+
+  /**
+   * 영어 목소리 고르기. 없으면 null.
+   *
+   * 같은 영어라도 기기마다 목록이 다르다. 미국 영어를 먼저 보고, 그중에서도
+   * 자연스럽게 읽는 쪽(Google/Neural/Natural 계열)을 올려 준다.
+   */
+  _englishVoice() {
+    const synth = globalThis.speechSynthesis;
+    if (!synth || typeof synth.getVoices !== 'function') return null;
+    let voices = [];
+    try { voices = synth.getVoices() || []; } catch { return null; }
+    // 목록이 바뀌면(voiceschanged, 다른 기기) 캐시를 버린다.
+    if (this._englishVoiceCache && voices.includes(this._englishVoiceCache)) {
+      return this._englishVoiceCache;
+    }
+    let best = null, bestScore = 0;
+    for (const voice of voices) {
+      const lang = String(voice?.lang || '').replace('_', '-');
+      if (!/^en(-|$)/i.test(lang)) continue;        // 영어가 아니면 후보가 아니다
+      if (this._badVoices.has(voice.name)) continue; // 한 번 소리가 안 났던 목소리
+      let score = /^en-US$/i.test(lang) ? 4 : 2;
+      if (/google|neural|natural|premium|enhanced/i.test(voice.name || '')) score += 2;
+      if (voice.localService === false) score += 1;  // 서버 목소리가 대체로 또렷하다
+      if (score > bestScore) { best = voice; bestScore = score; }
+    }
+    this._englishVoiceCache = best;
+    return best;
+  }
+
+  /**
+   * 대사 한 줄. 브라우저에 내장된 음성 합성을 쓴다(내려받는 파일 없음).
+   * 실제로 말했으면 true. 자막은 HUD 가 따로 보여 준다.
+   */
+  speak(text, { rate = 1.05, pitch = 1, volume = 1 } = {}) {
     if (!this.enabled || !this.speechEnabled || this.closed || !text) return false;
     const synth = globalThis.speechSynthesis;
     const Utterance = globalThis.SpeechSynthesisUtterance;
     if (!synth || typeof Utterance !== 'function') return false;
+    const voice = this._englishVoice();
+    if (!voice) return false;   // 영어 목소리가 없으면 말하지 않는다 (자막으로 간다)
     try {
+      // 탭을 옮겨 다니면 Chrome 의 음성 합성이 pause 상태로 굳는 일이 있다.
+      synth.resume?.();
       const utterance = new Utterance(text);
-      utterance.lang = lang;
-      utterance.rate = rate;
-      utterance.pitch = pitch;
+      utterance.voice = voice;
+      utterance.lang = voice.lang || 'en-US';
+      // 너무 빠르면 또 뭉개진다. 외치는 말이라 조금만 빠르게.
+      utterance.rate = Math.max(0.7, Math.min(1.4, rate));
+      utterance.pitch = Math.max(0.5, Math.min(1.6, pitch));
       utterance.volume = Math.max(0, Math.min(1, volume));
+      /* 서버에서 받아 오는 목소리(Google 계열)는 망이 막히면 아무 소리 없이
+       * 실패한다. 그런 목소리는 한 번 걸러 내고 다음 대사부터 다른 목소리로 읽는다.
+       * 우리가 직접 끊은 것(cancel)은 실패가 아니다. */
+      utterance.onerror = (event) => {
+        const reason = event?.error;
+        if (reason === 'interrupted' || reason === 'canceled') return;
+        this._badVoices.add(voice.name);
+        this._englishVoiceCache = null;
+      };
       synth.speak(utterance);
       return true;
     } catch { return false; }

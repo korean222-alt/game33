@@ -131,14 +131,96 @@ test('음성 합성이 없는 브라우저에서도 조용히 넘어간다', asy
   assert.equal(audio.speak('Drop the weapon!'), false);   // globalThis.speechSynthesis 없음
 
   const spoken = [];
-  globalThis.speechSynthesis = { speak: (u) => spoken.push(u), cancel: () => spoken.push('cancel') };
+  const voices = [
+    { name: '유나', lang: 'ko-KR', localService: true },
+    { name: 'Microsoft Zira', lang: 'en-US', localService: true },
+    { name: 'Google US English', lang: 'en-US', localService: false },
+    { name: 'Daniel', lang: 'en-GB', localService: true },
+  ];
+  globalThis.speechSynthesis = {
+    speak: (u) => spoken.push(u), cancel: () => spoken.push('cancel'),
+    getVoices: () => voices,
+  };
   globalThis.SpeechSynthesisUtterance = function Utterance(text) { this.text = text; };
   try {
     assert.equal(audio.speak('Drop the weapon!'), true);
     assert.equal(spoken[0].text, 'Drop the weapon!');
+    // 한국어 목소리로 영어를 읽으면 웅얼거린다. 영어 목소리를 직접 지정한다.
+    assert.equal(spoken[0].voice.name, 'Google US English');
     assert.equal(spoken[0].lang, 'en-US');
     audio.setEnabled(false);
     assert.equal(audio.speak('Hands up!'), false, '소리를 끄면 말도 하지 않는다');
+  } finally {
+    delete globalThis.speechSynthesis;
+    delete globalThis.SpeechSynthesisUtterance;
+  }
+  audio.dispose();
+});
+
+test('영어 목소리가 없는 기기에서는 말하지 않는다 (자막만 남는다)', async () => {
+  const ctx = context(), audio = new GameAudio({ contextFactory: () => ctx });
+  const spoken = [];
+  globalThis.speechSynthesis = {
+    speak: (u) => spoken.push(u), cancel: () => {},
+    getVoices: () => [{ name: '유나', lang: 'ko-KR', localService: true }],
+  };
+  globalThis.SpeechSynthesisUtterance = function Utterance(text) { this.text = text; };
+  try {
+    await audio.unlock();
+    assert.equal(audio.speak('Police! Drop the weapon!'), false);
+    assert.equal(spoken.length, 0, '한국어 목소리로 영어를 읽히지 않는다');
+  } finally {
+    delete globalThis.speechSynthesis;
+    delete globalThis.SpeechSynthesisUtterance;
+  }
+  audio.dispose();
+});
+
+test('소리가 나지 않은 목소리는 걸러 내고 다음 대사부터 다른 목소리로 읽는다', async () => {
+  const ctx = context(), audio = new GameAudio({ contextFactory: () => ctx });
+  const spoken = [];
+  globalThis.speechSynthesis = {
+    speak: (u) => spoken.push(u), cancel: () => {},
+    getVoices: () => [
+      { name: 'Google US English', lang: 'en-US', localService: false },
+      { name: 'Microsoft Zira', lang: 'en-US', localService: true },
+    ],
+  };
+  globalThis.SpeechSynthesisUtterance = function Utterance(text) { this.text = text; };
+  try {
+    await audio.unlock();
+    assert.equal(audio.speak('Hands up!'), true);
+    assert.equal(spoken[0].voice.name, 'Google US English');
+    spoken[0].onerror({ error: 'network' });         // 망이 막혀 소리가 안 났다
+    assert.equal(audio.speak('Hands up!'), true);
+    assert.equal(spoken[1].voice.name, 'Microsoft Zira', '기기에 있는 목소리로 넘어간다');
+    // 우리가 끊은 것은 실패가 아니다 - 그 목소리를 계속 쓴다.
+    spoken[1].onerror({ error: 'canceled' });
+    assert.equal(audio.speak('Hands up!'), true);
+    assert.equal(spoken[2].voice.name, 'Microsoft Zira');
+  } finally {
+    delete globalThis.speechSynthesis;
+    delete globalThis.SpeechSynthesisUtterance;
+  }
+  audio.dispose();
+});
+
+test('목소리 목록이 늦게 준비돼도 그다음 대사부터는 말한다', async () => {
+  const ctx = context(), audio = new GameAudio({ contextFactory: () => ctx });
+  const spoken = [];
+  let voices = [];                                  // Chrome 은 처음에 빈 배열을 준다
+  globalThis.speechSynthesis = {
+    speak: (u) => spoken.push(u), cancel: () => {},
+    getVoices: () => voices,
+    addEventListener: () => {},
+  };
+  globalThis.SpeechSynthesisUtterance = function Utterance(text) { this.text = text; };
+  try {
+    await audio.unlock();
+    assert.equal(audio.speak('Hands up!'), false);
+    voices = [{ name: 'Samantha', lang: 'en-US', localService: true }];
+    assert.equal(audio.speak('Hands up!'), true);
+    assert.equal(spoken[0].voice.name, 'Samantha');
   } finally {
     delete globalThis.speechSynthesis;
     delete globalThis.SpeechSynthesisUtterance;

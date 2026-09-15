@@ -116,6 +116,12 @@
   #objectives .obj.bonus { color:#a9a394; } #objectives .obj.bonus i { border-radius:50%; }
   #objectives .obj.failed { color:var(--danger); } #objectives .obj.failed i { background:var(--danger); border-color:var(--danger); }
 
+  /* 대사 자막. 조준선을 가리지 않도록 아래쪽에 깔고, 체력/탄약 줄보다는 위에 둔다. */
+  #subtitle { position:absolute; left:50%; transform:translateX(-50%);
+    bottom:calc(84px + var(--safe-b)); max-width:min(620px, 84vw); text-align:center;
+    font-size:14px; letter-spacing:.02em; color:#e6e2d6; text-shadow:0 2px 10px #000, 0 0 3px #000;
+    opacity:0; transition:opacity .18s; pointer-events:none; z-index:3; }
+
   .hudBot { position:absolute; left:calc(14px + var(--safe-l)); right:calc(14px + var(--safe-r));
     bottom:calc(12px + var(--safe-b)); display:flex; justify-content:space-between; align-items:flex-end; }
   .hp { min-width:168px; }
@@ -294,6 +300,7 @@
   <div id="fps" class="hidden">0 fps</div>
   <div id="killfeed"></div>
   <div id="banner"></div>
+  <div id="subtitle" role="status"></div>
   <div id="defuse" class="hidden">
     <div class="t" id="defuseTxt">해체 중…</div>
     <div class="pb"><div class="pf" id="defuseFill"></div></div>
