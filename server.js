@@ -70,6 +70,17 @@ const REVIVE_SECONDS = 4.0;
 const EVIDENCE_SECONDS = 1.4;
 const BLEED_OUT_MS = 75000;
 const SHOUT_COOLDOWN = 1600;
+/* 소켓이 끊겨도 자리를 비워 두는 시간.
+ *
+ *  와이파이 순단이나 Render 무료 인스턴스의 슬립은 몇 초에서 1분까지 간다.
+ *  끊기자마자 지워 버리면 22분짜리 작전에서 1초 만에 영구 퇴장이 된다.
+ *  90초는 그 둘을 다 덮으면서, 살아 있는 팀에게 "돌아오나" 를 마냥 기다리게
+ *  하지는 않는 길이다.
+ *
+ *  테스트는 90초를 기다릴 수 없으므로 환경변수로 줄일 수 있게 둔다. */
+const RECONNECT_GRACE_MS = Number(process.env.RECONNECT_GRACE_MS) > 0
+  ? Number(process.env.RECONNECT_GRACE_MS)
+  : 90000;
 const REINFORCE_DELAY_MS = 14000;
 const REINFORCE_COUNT = 3;
 
@@ -184,6 +195,10 @@ class Room {
 
   get alivePlayers() { return [...this.players.values()].filter((p) => p.alive); }
   get standingPlayers() { return [...this.players.values()].filter((p) => p.alive && !p.downed); }
+  /** 지금 화면을 보고 있는 대원. 준비/브리핑 확인은 이쪽으로 센다. */
+  get connectedPlayers() { return [...this.players.values()].filter((p) => p.connected); }
+  /** 자리를 비워 둔 채 복귀를 기다리는 대원. */
+  get heldPlayers() { return [...this.players.values()].filter((p) => !p.connected); }
   get suspects() { return this.npcs.filter((n) => n.kind !== 'civilian'); }
   get civilians() { return this.npcs.filter((n) => n.kind === 'civilian'); }
 
@@ -192,7 +207,16 @@ class Room {
     const spawn = SPAWNS[idx % SPAWNS.length];
     const wk = WEAPONS[weapon] ? weapon : 'rifle';
     const p = {
+      /* id 는 게임 안의 신원이고 socketId 는 지금 붙어 있는 연결이다.
+       *
+       *  둘을 한 값으로 쓰던 동안에는 재접속이 원리상 불가능했다 — 소켓이
+       *  바뀌면 id 도 바뀌고, 그러면 다른 화면에 그려져 있던 아바타·킬로그·
+       *  체포 기록이 전부 남남이 된다. id 는 첫 접속 때 한 번 정하고 다시는
+       *  바뀌지 않는다. 특정 대원에게만 보내는 emit 은 socketId 를 쓴다. */
       id: socket.id,
+      socketId: socket.id,
+      connected: true,
+      disconnectedAt: 0,
       name: (name || '대원').slice(0, 12),
       slot: idx,
       x: spawn.x, y: 0, z: spawn.z,
@@ -221,7 +245,42 @@ class Room {
 
   removePlayer(id) {
     this.players.delete(id);
-    if (this.hostId === id) this.hostId = this.players.keys().next().value || null;
+    if (this.hostId === id) this.hostId = this.connectedPlayers[0]?.id ?? this.players.keys().next().value ?? null;
+  }
+
+  /**
+   * 소켓만 떨어뜨리고 대원은 남긴다.
+   *
+   *  입력이 끊기므로 좌표는 마지막 값에 그대로 멈춘다 — 별도의 고정 코드가
+   *  필요 없다. NPC 쪽에서 보면 그 자리에 계속 서 있는 사람이라, 표적으로도
+   *  장애물로도 여전히 보인다. HP·탄약·들고 있던 목표는 건드리지 않는다.
+   */
+  holdPlayer(player) {
+    player.connected = false;
+    player.disconnectedAt = now();
+    player.socketId = null;
+    // 끊긴 사람이 방장이면 남아 있는 사람에게 넘긴다. 돌아오면 그냥 대원이다.
+    if (this.hostId === player.id) this.hostId = this.connectedPlayers[0]?.id ?? this.hostId;
+    // 조작이 멈춘 몸이 달리는 자세로 얼어붙어 있으면 이상하다.
+    player.moving = 0; player.sprint = 0;
+    player.holdingUse = false;
+    player.defusing = null;
+    player.interacting = null;
+    player.interactProgress = 0;
+    player.doorAction = null;
+  }
+
+  /** 같은 이름으로 자리를 비워 둔 대원. 방 코드 + 이름이면 충분히 좁혀진다. */
+  findHeldByName(name) {
+    const key = (name || '대원').slice(0, 12);
+    return this.heldPlayers.find((p) => p.name === key) || null;
+  }
+
+  /** 유예 시간이 끝난 대원의 id 목록. */
+  expiredHolds(t = now()) {
+    return this.heldPlayers
+      .filter((p) => t - p.disconnectedAt > RECONNECT_GRACE_MS)
+      .map((p) => p.id);
   }
 
   lobbyState() {
@@ -235,6 +294,9 @@ class Room {
       players: [...this.players.values()].map((p) => ({
         id: p.id, name: p.name, slot: p.slot, ready: p.ready,
         weapon: p.weapon, briefingReady: p.briefingReady,
+        connected: p.connected,
+        // 남은 유예 시간. 화면에 "45초 안에 복귀 가능" 으로 쓴다.
+        holdMs: p.connected ? 0 : Math.max(0, RECONNECT_GRACE_MS - (now() - p.disconnectedAt)),
       })),
     };
   }
@@ -440,8 +502,9 @@ function makeWorld(room, dt, io) {
       // 발각된 대원에게는 어느 쪽에서 발각됐는지 알린다. 밤이라 사람이 먼저
       // 보이지 않는 경우가 많아서, 이 신호가 없으면 총알이 어디서 오는지
       // 알 방법이 없다.
-      if (target?.id) {
-        io.to(target.id).emit('spotted', {
+      const targetSocket = target?.id ? room.players.get(target.id)?.socketId : null;
+      if (targetSocket) {
+        io.to(targetSocket).emit('spotted', {
           id: npc.id, kind: npc.kind,
           x: +npc.x.toFixed(2), z: +npc.z.toFixed(2),
         });
@@ -646,7 +709,7 @@ function explode(room, grenade, io) {
       const seconds = flashSeconds(flashStrength(at, p, colliders, p.yaw));
       if (seconds <= 0) continue;
       p.blindUntil = Math.max(p.blindUntil, now() + seconds * 1000);
-      io.to(p.id).emit('flashed', { seconds });
+      if (p.socketId) io.to(p.socketId).emit('flashed', { seconds });
     }
     for (const npc of room.npcs) {
       if (!npc.alive) continue;
@@ -855,7 +918,7 @@ function shout(room, player, io, line = 0) {
   }
   // 무엇이 일어났는지 외친 본인에게만 알려 준다. 아무 반응이 없어도
   // "아무도 못 들었다"는 것 자체가 정보다.
-  io.to(player.id).emit('shoutResult', tally);
+  if (player.socketId) io.to(player.socketId).emit('shoutResult', tally);
 }
 
 /* ========================================================================== *
@@ -1008,6 +1071,62 @@ function checkMissionEnd(room, io) {
   if (room.players.size > 0 && room.alivePlayers.length === 0) finishMatch(room, 'lost', io);
 }
 
+/* ========================================================================== *
+ *  재접속 유예
+ * ========================================================================== */
+/** 자리를 비워 둔다고 팀에게 알린다. 남은 초까지 줘야 기다릴지 말지 정할 수 있다. */
+function announceHold(room, player, io) {
+  const seconds = Math.round(RECONNECT_GRACE_MS / 1000);
+  io.to(room.code).emit('playerHeld', { id: player.id, name: player.name, seconds });
+  io.to(room.code).emit('radio', { text: `무전: ${player.name} 통신 두절 — ${seconds}초 안에 복귀 가능` });
+  io.to(room.code).emit('lobby', room.lobbyState());
+}
+
+/**
+ * 유예 시간이 끝난 자리를 정리한다.
+ *
+ *  여기까지 와야 비로소 기존 흐름(removePlayer + checkMissionEnd)을 탄다.
+ *  방을 지우는 것도 여기서만 한다 — "비워 둔 대원만 남은 방" 을 지워 버리면
+ *  유예 시간 자체가 무의미해진다.
+ */
+function dropExpiredHolds(room, io) {
+  const gone = room.expiredHolds();
+  if (!gone.length) return false;
+  for (const id of gone) {
+    const player = room.players.get(id);
+    room.removePlayer(id);
+    io.to(room.code).emit('playerLeft', { id });
+    if (player) io.to(room.code).emit('radio', { text: `무전: ${player.name} 복귀 실패 — 명단에서 제외한다.` });
+  }
+  io.to(room.code).emit('lobby', room.lobbyState());
+  if (room.players.size === 0) {
+    closeRoom(room);
+    return true;
+  }
+  checkMissionEnd(room, io);
+  return true;
+}
+
+function closeRoom(room) {
+  if (room.timer) { clearInterval(room.timer); room.timer = null; }
+  rooms.delete(room.code);
+}
+
+/**
+ * 아무도 안 붙어 있는 방을 치운다.
+ *
+ *  경기가 끝나면 틱이 멈추므로 유예 청소를 돌려 줄 주체가 없어진다. 5초마다
+ *  도는 이 청소기가 그 구멍을 막는다. unref 라서 테스트 프로세스를 붙잡지 않는다.
+ */
+const roomJanitor = setInterval(() => {
+  for (const room of [...rooms.values()]) {
+    if (room.state === 'active') continue;    // 틱이 알아서 본다
+    for (const id of room.expiredHolds()) room.removePlayer(id);
+    if (room.players.size === 0) closeRoom(room);
+  }
+}, 5000);
+roomJanitor.unref?.();
+
 function finishMatch(room, result, io) {
   if (room.state !== 'active') return;
   room.state = result;
@@ -1094,6 +1213,51 @@ const npcPublic = (n) => ({
   holdingHostage: n.kind !== 'civilian' && !!n.hostage, // 시민을 방패로 삼은 자
 });
 
+/**
+ * 지금 경기 상태를 통째로 담은 한 덩어리.
+ *
+ *  시작할 때 한 번 쓰고, 중간에 돌아온 대원에게 한 번 더 쓴다. 두 자리가
+ *  같은 함수를 쓰는 것이 요점이다 — 따로 두면 새 필드가 늘 한쪽에만 붙고,
+ *  돌아온 사람 화면에서만 문이나 증거가 빠진 채로 나온다.
+ *
+ * @param {object|null} self  돌아온 대원. 주면 그 사람 몫의 현재 상태를 같이 싣는다.
+ */
+function matchStatePayload(room, self = null) {
+  return {
+    protocol: GAME_PROTOCOL,
+    endsAt: room.endsAt,
+    // defused 는 이어 들어온 화면이 이미 해체된 지점을 꺼진 채로 그리는 데 쓴다.
+    sites: room.sites.map((s) => ({ id: s.id, x: s.x, z: s.z, label: s.label, defused: !!s.defused })),
+    evidence: room.evidence.map((e) => ({ id: e.id, x: e.x, z: e.z, label: e.label, taken: !!e.taken })),
+    defuseSeconds: DEFUSE_SECONDS,
+    extraction: EXTRACTION,
+    doors: room.doors.snapshot(),
+    npcs: room.npcs.map(npcPublic),
+    objectives: objectiveReport(room),
+    phase: room.phase,
+    generatorStarted: room.generatorStarted,
+    power: room.power,          // 재접속 시에도 정전/복구 상태를 전달한다
+    grenades: GRENADES,
+    grenadeOrder: GRENADE_ORDER,
+    players: [...room.players.values()].map((p) => ({
+      id: p.id, name: p.name, slot: p.slot, weapon: p.weapon,
+      x: p.x, z: p.z, yaw: p.yaw, connected: p.connected,
+    })),
+    weapons: WEAPONS,
+    shotProtocol: 2,
+    ...(self ? {
+      resumed: true,
+      self: {
+        id: self.id, hp: self.hp, alive: self.alive, downed: self.downed,
+        weapon: self.weapon, ammo: self.ammo, reserve: self.reserve,
+        grenades: self.grenades, sel: self.selectedGrenade,
+        x: self.x, y: self.y, z: self.z, yaw: self.yaw, pitch: self.pitch,
+        kills: self.kills, arrests: self.arrests, rescues: self.rescues,
+      },
+    } : null),
+  };
+}
+
 function startMatch(room, io) {
   room.resetMission();
   setupMission(room);
@@ -1118,27 +1282,7 @@ function startMatch(room, io) {
     i++;
   }
 
-  io.to(room.code).emit('matchStart', {
-    protocol: GAME_PROTOCOL,
-    endsAt: room.endsAt,
-    sites: room.sites.map((s) => ({ id: s.id, x: s.x, z: s.z, label: s.label })),
-    evidence: room.evidence.map((e) => ({ id: e.id, x: e.x, z: e.z, label: e.label })),
-    defuseSeconds: DEFUSE_SECONDS,
-    extraction: EXTRACTION,
-    doors: room.doors.snapshot(),
-    npcs: room.npcs.map(npcPublic),
-    objectives: objectiveReport(room),
-    generatorStarted: room.generatorStarted,
-    power: room.power,          // 재접속 시에도 정전/복구 상태를 전달한다
-    grenades: GRENADES,
-    grenadeOrder: GRENADE_ORDER,
-    players: [...room.players.values()].map((p) => ({
-      id: p.id, name: p.name, slot: p.slot, weapon: p.weapon,
-      x: p.x, z: p.z, yaw: p.yaw,
-    })),
-    weapons: WEAPONS,
-    shotProtocol: 2,
-  });
+  io.to(room.code).emit('matchStart', matchStatePayload(room));
   io.to(room.code).emit('radio', { text: MISSION.entry });
 
   if (room.timer) clearInterval(room.timer);
@@ -1153,6 +1297,10 @@ function tickRoom(room, io) {
   const t = now();
   const dt = Math.min(0.25, (t - room.lastTick) / 1000);
   room.lastTick = t;
+  if (room.state !== 'active') return;
+
+  // 유예 시간이 끝난 대원은 이제 진짜로 나간 것으로 친다.
+  if (room.heldPlayers.length) dropExpiredHolds(room, io);
   if (room.state !== 'active') return;
 
   // 쓰러진 대원의 출혈
@@ -1265,19 +1413,36 @@ io.on('connection', (socket) => {
   let room = null;
   let me = null;
 
+  /** 완전히 나간다. 스스로 나가기를 눌렀거나, 경기 중이 아닐 때 끊긴 경우. */
   const leave = () => {
-    if (!room) return;
+    if (!room || !me) { room = null; me = null; return; }
+    const id = me.id;
     cancelBriefing(room, io);
-    room.removePlayer(socket.id);
+    room.removePlayer(id);
     socket.leave(room.code);
     io.to(room.code).emit('lobby', room.lobbyState());
-    io.to(room.code).emit('playerLeft', { id: socket.id });
+    io.to(room.code).emit('playerLeft', { id });
     if (room.players.size === 0) {
-      if (room.timer) clearInterval(room.timer);
-      rooms.delete(room.code);
+      closeRoom(room);
     } else {
       checkMissionEnd(room, io);
     }
+    room = null; me = null;
+  };
+
+  /**
+   * 경기 중에 끊겼다. 자리를 비워 두고 기다린다.
+   *
+   *  여기서 removePlayer 를 부르지 않는 것이 이 기능의 전부다. 예전에는
+   *  disconnect 가 곧바로 leave 였고, 그래서 1초 순단이 영구 퇴장이었다.
+   */
+  const holdOrLeave = () => {
+    if (!room || !me) { room = null; me = null; return; }
+    if (room.state !== 'active') { leave(); return; }
+    const held = me;
+    room.holdPlayer(held);
+    socket.leave(room.code);
+    announceHold(room, held, io);
     room = null; me = null;
   };
 
@@ -1298,9 +1463,35 @@ io.on('connection', (socket) => {
     const key = String(code || '').toUpperCase().trim();
     const r = rooms.get(key);
     if (!r) return cb?.({ ok: false, error: '그런 방 코드가 없어요.' });
+    if (room === r && me?.connected) return cb?.({ ok: true, you: me.id, lobby: room.lobbyState() });
+
+    /* 같은 이름이 자리를 비워 두고 있으면 새 소켓을 그 자리에 이어 붙인다.
+     * 인원 수·진행 중 검사보다 먼저 본다 — 돌아오는 사람은 새로 들어오는
+     * 사람이 아니라 원래 있던 사람이고, 방이 꽉 찼다는 말은 그의 자리까지
+     * 세어서 나온 말이기 때문이다. */
+    const held = r.findHeldByName(name);
+    if (held) {
+      leave();
+      room = r;
+      me = held;
+      me.socketId = socket.id;
+      me.connected = true;
+      me.disconnectedAt = 0;
+      if (!room.hostId) room.hostId = me.id;
+      socket.join(room.code);
+      cb?.({ ok: true, you: me.id, resumed: true, lobby: room.lobbyState() });
+      io.to(room.code).emit('lobby', room.lobbyState());
+      io.to(room.code).emit('playerRejoined', { id: me.id, name: me.name });
+      if (room.state === 'active') {
+        // 진행 중인 판을 통째로 다시 실어 준다. 시작 때와 같은 페이로드다.
+        socket.emit('matchStart', matchStatePayload(room, me));
+        io.to(room.code).emit('radio', { text: `무전: ${me.name} 복귀. 대열에 합류했다.` });
+      }
+      return;
+    }
+
     if (r.players.size >= 4) return cb?.({ ok: false, error: '방이 꽉 찼어요 (최대 4명).' });
     if (r.state === 'active' || r.state === 'briefing') return cb?.({ ok: false, error: '이미 작전이 진행 중이에요.' });
-    if (room === r) return cb?.({ ok: true, you: me.id, lobby: room.lobbyState() });
     leave();
     room = r;
     me = room.addPlayer(socket, name, weapon);
@@ -1321,16 +1512,16 @@ io.on('connection', (socket) => {
   });
 
   socket.on('setRoomConfig', ({ botCount, difficulty } = {}) => {
-    if (!room || room.hostId !== socket.id || room.state === 'active' || room.state === 'briefing') return;
+    if (!room || !me || room.hostId !== me.id || room.state === 'active' || room.state === 'briefing') return;
     if (botCount) room.botCount = clamp(botCount | 0, 3, 14);
     if (difficulty && DIFFICULTY[difficulty]) room.difficulty = difficulty;
     io.to(room.code).emit('lobby', room.lobbyState());
   });
 
   socket.on('startMatch', () => {
-    if (!room || room.hostId !== socket.id) return;
+    if (!room || !me || room.hostId !== me.id) return;
     if (room.state === 'active' || room.state === 'briefing') return;
-    if (![...room.players.values()].every((p) => p.ready)) return;
+    if (!room.connectedPlayers.every((p) => p.ready)) return;
     beginBriefing(room, io);
   });
 
@@ -1338,11 +1529,11 @@ io.on('connection', (socket) => {
     if (!room || !me || room.state !== 'briefing' || id !== room.briefingId) return;
     me.briefingReady = true;
     io.to(room.code).emit('lobby', room.lobbyState());
-    if ([...room.players.values()].every((p) => p.briefingReady)) startMatch(room, io);
+    if (room.connectedPlayers.every((p) => p.briefingReady)) startMatch(room, io);
   });
 
   socket.on('cancelBriefing', () => {
-    if (!room || room.hostId !== socket.id || room.state !== 'briefing') return;
+    if (!room || !me || room.hostId !== me.id || room.state !== 'briefing') return;
     cancelBriefing(room, io);
     io.to(room.code).emit('lobby', room.lobbyState());
   });
@@ -1460,10 +1651,10 @@ io.on('connection', (socket) => {
   socket.on('ping:rtt', (t0, cb) => cb?.(t0));
 
   socket.on('leaveRoom', leave);
-  socket.on('disconnect', leave);
+  socket.on('disconnect', holdOrLeave);
 });
 
-export { Room, tickRoom, updateInteractions };
+export { Room, tickRoom, updateInteractions, dropExpiredHolds, RECONNECT_GRACE_MS };
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) server.listen(PORT, () => {
   console.log('');

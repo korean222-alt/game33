@@ -408,6 +408,18 @@ export class Game {
     s.on('npcsJoined', (d) => this.entities.spawnNpcs(d.npcs || []));
     s.on('playerLeft', (d) => this.entities.removePlayer(d.id));
 
+    // 팀원의 연결이 끊겼다. 아바타는 마지막 자리에 그대로 서 있고, 서버가
+    // 자리를 비워 둔 채 복귀를 기다린다.
+    s.on('playerHeld', (d) => {
+      if (d.id === this.myId) return;
+      this.hud.banner(`${d.name} 연결 끊김 — ${d.seconds}초 안에 복귀 가능`, 4000);
+      this.hud.killfeed(`${d.name} 통신 두절`);
+    });
+    s.on('playerRejoined', (d) => {
+      if (d.id === this.myId) return;
+      this.hud.banner(`${d.name} 복귀`, 2500);
+    });
+
     s.on('disconnect', () => {
       if (!this.matchActive) return;
       this.hud.banner('서버와 연결이 끊겼습니다', 6000);
@@ -512,15 +524,52 @@ export class Game {
       this.weaponName = w.name;
     }
 
+    /* 중간에 돌아온 경우.
+     *
+     *  위쪽은 "새 판" 을 가정하고 체력 100·탄창 가득으로 맞춰 놓는다. 다음
+     *  스냅샷이 오면 어차피 서버 값으로 덮이지만, 그 사이 한두 프레임 동안
+     *  가짜 체력과 가짜 탄약이 보인다. 돌아온 사람이 제일 먼저 보는 숫자가
+     *  그것이면 곤란하다. 서버가 같이 보내 준 내 상태로 먼저 맞춘다. */
+    if (d.resumed && d.self) {
+      const self = d.self;
+      this.hp = self.hp;
+      this.alive = self.alive !== false;
+      this.downed = !!self.downed;
+      this.ammo = self.ammo;
+      this.shots.serverAmmo = self.ammo;
+      this.reserve = self.reserve;
+      this.grenades = { ...self.grenades };
+      this.selectedGrenade = self.sel || this.selectedGrenade;
+      this.player.spawn(self.x, self.z, self.yaw);
+    }
+
     this.hud.resetForNewMatch();
     this.hud.buildSites(d.sites);
     this.hud.setObjectives(d.objectives);
-    this.hud.setHp(100);
+    this.hud.setHp(this.hp);
     this.hud.setAmmo(this.ammo, this.reserve, false, this.weaponName);
     this.hud.setGrenade(this.selectedGrenade, this.grenades, GRENADES[this.selectedGrenade]);
     this.hud.show(null);
     this.hud.showTouch(isTouchDevice);
-    this.hud.radio(MISSION.entry);
+
+    if (d.resumed) {
+      // 이미 끝난 목표는 꺼진 채로 그린다. 안 그러면 돌아온 화면에만
+      // 해체된 폭발물이 아직 살아 있는 것으로 보인다.
+      for (const site of d.sites || []) {
+        if (!site.defused) continue;
+        this.hud.setSiteDefused(site.id);
+        this.world.setSiteDefused(site.id);
+      }
+      for (const item of d.evidence || []) {
+        if (item.taken) this.world.setEvidenceTaken(item.id);
+      }
+      this.world.setExtractionActive(d.objectives?.id === 'extract');
+      this.hud.setDead(this.downed && !this.alive, '전사 — 작전 종료를 기다리는 중');
+      this.hud.banner('재접속 완료 — 작전에 복귀했습니다', 3000);
+      this.hud.radio('무전: 복귀 확인. 현재 상황을 갱신했다.');
+    } else {
+      this.hud.radio(MISSION.entry);
+    }
 
     // 소리가 아직 안 켜졌으면(브라우저가 제스처를 기다리는 중) 깨우고 안내한다.
     void this.audio?.unlock();

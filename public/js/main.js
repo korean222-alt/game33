@@ -26,6 +26,9 @@ const state = {
   ready: false,
   briefing: null,
   menuAudio: null,
+  // 끊긴 뒤 자리를 이어받으려고 기다리는 중이면 { code, since }.
+  rejoin: null,
+  rejoinTimer: 0,
 };
 
 /* ========================================================================== *
@@ -205,8 +208,18 @@ async function ensureGame() {
  *  로비
  * ========================================================================== */
 function wireLobbyEvents() {
-  state.socket.on('lobby', (l) => applyLobby(l));
-  state.socket.on('briefing', (data) => {
+  /* 소켓이 스스로 재연결하면 객체는 그대로다. 그때 이 함수를 다시 부르면
+   * 같은 핸들러가 두 번씩 달려서 로비가 두 번 그려지고, 끊김 처리가 두 번
+   * 돈다. 붙인 적이 있으면 떼고 다시 붙인다. */
+  if (state.socket.__lobbyWired) {
+    for (const [event, fn] of state.socket.__lobbyWired) state.socket.off(event, fn);
+  }
+  const wired = [];
+  const on = (event, fn) => { wired.push([event, fn]); state.socket.on(event, fn); };
+  state.socket.__lobbyWired = wired;
+
+  on('lobby', (l) => applyLobby(l));
+  on('briefing', (data) => {
     state.briefing = { id: data.id, page: 0, confirmed: false };
     state.game?.input.disable();
     state.game?.stop();
@@ -215,71 +228,78 @@ function wireLobbyEvents() {
     state.hud.show('briefing');
     $('briefTitle').focus();
   });
-  state.socket.on('briefingCancelled', () => {
+  on('briefingCancelled', () => {
     state.briefing = null;
     state.hud.show('lobby');
     $('lobbyErr').textContent = '브리핑이 취소되었습니다. 준비 상태를 다시 확인해 주세요.';
   });
-  state.socket.on('matchStart', () => { state.briefing = null; });
+  on('matchStart', () => { state.briefing = null; });
 
-  state.socket.on('disconnect', (reason) => {
+  /* 소켓이 스스로 돌아왔다. 서버가 같은 이름으로 자리를 비워 두고 있으면
+   * joinRoom 한 번으로 그 자리에 이어 붙고, 서버가 진행 중인 판을 통째로
+   * 다시 보내 준다(matchStart, resumed:true). 여기서 Game 을 새로 만들지
+   * 않는 것이 중요하다 — 모델을 다시 받느라 20초를 버리면 유예 시간이
+   * 그만큼 날아간다. */
+  on('connect', () => {
+    if (!state.rejoin) return;
+    const { code } = state.rejoin;
+    state.socket.timeout(15000).emit('joinRoom', {
+      code, name: playerName(), weapon: state.weapon,
+    }, (err, res) => {
+      if (!err && res?.ok) {
+        state.rejoin = null;
+        state.myId = res.you;
+        if (state.game) state.game.myId = state.myId;
+        applyLobby(res.lobby);
+        if (!res.resumed) state.hud.banner('재접속 완료', 2500);
+        return;
+      }
+      giveUpRejoin(err ? '응답이 없습니다' : (res?.error || '자리가 이미 정리되었습니다'));
+    });
+  });
+
+  on('disconnect', (reason) => {
     console.warn('[net] disconnect', reason);
-    // 작전 중이면 바로 메뉴로 보내지 않고 재연결을 시도한다.
-    const hadLobby = state.lobby?.code;
+    const code = state.lobby?.code;
     const inMatch = !!state.game && state.hud.screen !== 'menu' && state.hud.screen !== 'lobby';
-    if (inMatch && hadLobby) {
+    if (inMatch && code) {
       setMenuErr('');
-      state.hud.banner('연결이 끊겼습니다. 재접속 중… (같은 이름·방 코드로 90초 안에 돌아오면 이어집니다)', 8000);
-      // 소켓이 자동 재연결되면 joinRoom으로 슬롯을 이어받는다
-      const tryRejoin = async () => {
-        try {
-          if (!state.socket) state.socket = await connect();
-          if (!state.socket.connected) {
-            await new Promise((res, rej) => {
-              const t = setTimeout(() => rej(new Error('timeout')), 30000);
-              state.socket.once('connect', () => { clearTimeout(t); res(); });
-              state.socket.once('connect_error', (e) => { clearTimeout(t); rej(e); });
-            });
-          }
-          wireLobbyEvents();
-          const res = await new Promise((resolve) => {
-            state.socket.timeout(15000).emit('joinRoom', {
-              code: hadLobby, name: playerName(), weapon: state.weapon,
-            }, (err, response) => resolve(err ? { ok: false, error: '응답 지연' } : response));
-          });
-          if (res?.ok) {
-            state.myId = res.you;
-            if (state.game) state.game.myId = state.myId;
-            applyLobby(res.lobby);
-            state.hud.banner('재접속 완료', 2500);
-            return;
-          }
-          setMenuErr(res?.error || '재접속에 실패했습니다. 메뉴에서 같은 방 코드로 다시 참가해 주세요.');
-        } catch (e) {
-          console.error(e);
-          setMenuErr('서버 재연결에 실패했습니다. 잠시 후 같은 방 코드로 다시 참가해 주세요.');
-        }
-        state.game?.dispose();
-        state.game = null;
-        state.ready = false;
-        state.briefing = null;
-        state.hud.showTouch(false);
-        state.hud.show('menu');
-      };
-      // 약간의 딜레이 후 재시도 (Render 슬립 웨이크 시간 고려)
-      setTimeout(tryRejoin, 2000);
+      state.rejoin = { code, since: Date.now() };
+      state.game?.input.disable();
+      state.hud.banner('연결이 끊겼습니다. 재접속 중… (90초 안에 돌아오면 작전이 이어집니다)', 8000);
+      // socket.io 가 알아서 다시 붙는다. 붙으면 위의 connect 가 자리를 이어받는다.
+      // 그래도 안 붙으면 유예 시간이 끝나는 시점에 포기한다.
+      clearTimeout(state.rejoinTimer);
+      state.rejoinTimer = setTimeout(() => {
+        if (state.rejoin) giveUpRejoin('유예 시간이 끝났습니다');
+      }, REJOIN_WINDOW_MS);
       return;
     }
-    state.game?.dispose();
-    state.game = null;
-    state.socket?.disconnect();
-    state.socket = null;
-    state.ready = false;
-    state.briefing = null;
-    state.hud.showTouch(false);
-    state.hud.show('menu');
-    setMenuErr('서버와 연결이 끊겼습니다. 방을 다시 만들거나 참가해 주세요.');
+    dropToMenu('서버와 연결이 끊겼습니다. 방을 다시 만들거나 참가해 주세요.');
   });
+}
+
+/** 서버가 자리를 비워 두는 90초. 그 안에 못 붙으면 메뉴로 돌린다. */
+const REJOIN_WINDOW_MS = 92000;
+
+function giveUpRejoin(why) {
+  state.rejoin = null;
+  clearTimeout(state.rejoinTimer);
+  dropToMenu(`재접속에 실패했습니다 (${why}). 메뉴에서 같은 방 코드로 다시 참가해 주세요.`);
+}
+
+function dropToMenu(message) {
+  state.rejoin = null;
+  clearTimeout(state.rejoinTimer);
+  state.game?.dispose();
+  state.game = null;
+  state.socket?.disconnect();
+  state.socket = null;
+  state.ready = false;
+  state.briefing = null;
+  state.hud.showTouch(false);
+  state.hud.show('menu');
+  setMenuErr(message);
 }
 
 function applyLobby(l) {
