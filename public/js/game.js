@@ -13,7 +13,7 @@
 
 import * as THREE from 'three';
 import { QUALITY, NET, PLAYER, loadSettings, saveSettings, guessQuality } from './config.js';
-import { rayObstacleDistance, isIndoors, setActiveMap, CURRENT_MAP } from './map-data.js';
+import { rayObstacleDistance, isIndoors, setActiveMap, CURRENT_MAP, getMap } from './map-data.js';
 import { DOOR, DoorSet, rollDoorStates, DOOR_REACH } from './doors.js';
 import { GRENADE_ORDER, GRENADES, startingGrenades } from './grenades.js';
 import { AssetManager } from './assets.js';
@@ -111,6 +111,8 @@ export class Game {
     this._lastSpeech = 0;
     this._lastCough = 0;
     this.peek = null;
+    // 울고 있는 화재경보기 (사무실). id -> { x, z, until }
+    this._alarms = new Map();
   }
 
   /* ======================================================================= *
@@ -190,6 +192,19 @@ export class Game {
     return this;
   }
 
+  /**
+   * 이 맵에서만 쓰는 소품을 미리 받아 둔다.
+   *
+   *  로비에서 맵을 고르는 순간 부른다. 이미 받은 것은 캐시가 돌려주므로 두 번
+   *  받지 않고, 실패해도 조용히 넘어간다 - 소품 하나가 없으면 그 자리에
+   *  placeholder 상자가 설 뿐 경기가 못 뜨는 건 아니다.
+   */
+  async preloadMap(mapId) {
+    const keys = getMap(mapId)?.models;
+    if (!keys?.length || !this.assets) return;
+    try { await this.assets.loadAll(keys); } catch (err) { console.warn('[assets] 맵 소품 준비 실패', err); }
+  }
+
   _onResize() {
     if (!this.renderer) return;
     const { width, height } = document.getElementById('app').getBoundingClientRect();
@@ -206,7 +221,7 @@ export class Game {
     this._socketHandlers = [];
     const s = { on: (event, fn) => { this._socketHandlers.push([event, fn]); this.socket.on(event, fn); } };
 
-    s.on('matchStart', (d) => this._onMatchStart(d));
+    s.on('matchStart', (d) => { void this._onMatchStart(d); });
     s.on('snapshot', (d) => this._onSnapshot(d));
     s.on('matchEnd', (d) => this._onMatchEnd(d));
     s.on('radio', (d) => this.hud.radio(d?.text));
@@ -408,6 +423,23 @@ export class Game {
     s.on('npcsJoined', (d) => this.entities.spawnNpcs(d.npcs || []));
     s.on('playerLeft', (d) => this.entities.removePlayer(d.id));
 
+    /* 맵이 스스로 내는 소리 (사무실). 화면에는 아무것도 안 띄운다 - 소리로
+     * 알아채는 것이 이 장치의 전부이고, 배너가 뜨면 경비가 왜 돌아섰는지를
+     * 글로 알려 주는 셈이 된다. */
+    s.on('mapSound', (d) => {
+      if (!this.matchActive) return;
+      this.audio?.machine({ x: d.x, y: 1.2, z: d.z }, d.type);
+    });
+    s.on('alarmStarted', (d) => {
+      if (!this.matchActive) return;
+      this._alarms.set(d.id, { x: d.x, z: d.z, until: performance.now() + d.seconds * 1000 });
+      this.audio?.alarmBell({ x: d.x, y: 2.2, z: d.z });
+      this.hud.banner(d.by === this.myId
+        ? `${d.label} 작동 — ${d.seconds}초간 그쪽으로 사람이 몰린다`
+        : `${d.label} 작동`, 3200);
+    });
+    s.on('alarmStopped', (d) => this._alarms.delete(d.id));
+
     // 팀원의 연결이 끊겼다. 아바타는 마지막 자리에 그대로 서 있고, 서버가
     // 자리를 비워 둔 채 복귀를 기다린다.
     s.on('playerHeld', (d) => {
@@ -458,7 +490,7 @@ export class Game {
   }
 
   /* ---- 매치 시작 -------------------------------------------------------- */
-  _onMatchStart(d) {
+  async _onMatchStart(d) {
     if (!compatibleMatch(d, this.myId)) {
       this.matchActive = false;
       this.stop();
@@ -478,6 +510,8 @@ export class Game {
      *  그대로다. 여기서 다시 짓지 않으면 사무실 좌표 위에 저택 벽이 서 있는
      *  화면이 된다. 모델은 캐시에 있으므로 로딩 화면으로 돌아가지 않는다. */
     if (d.mapId && d.mapId !== CURRENT_MAP.id) {
+      // 로비에서 이미 받아 뒀으면 캐시가 바로 돌려준다.
+      await this.preloadMap(d.mapId);
       setActiveMap(d.mapId);
       this.world.rebuild(this.settings.quality);
       this.world.attachTorch(this.camera);
@@ -507,6 +541,7 @@ export class Game {
     this.blindUntil = 0;
     this.gas = 0;
     this._doorBusyUntil = 0;
+    this._alarms.clear();
     this.grenades = startingGrenades();
     this.selectedGrenade = GRENADE_ORDER[0];
 
@@ -708,9 +743,22 @@ export class Game {
     dt = Math.min(dt, 0.1);      // 탭 복귀 시 한 번에 크게 튀지 않도록
 
     this._step(dt, now);
+    this._ringAlarms(now);
     this.pipeline.render();
     this._trackFps(dt);
   };
+
+  /* 울고 있는 경보기는 계속 울려야 한다. 서버가 펄스를 매번 보내면 8초 동안
+   * 열두 번의 패킷이 되므로, 시작/정지만 받고 소리는 여기서 반복한다. */
+  _ringAlarms(now) {
+    if (!this._alarms.size) return;
+    for (const [id, a] of this._alarms) {
+      if (now >= a.until) { this._alarms.delete(id); continue; }
+      if (now < (a.nextRing || 0)) continue;
+      a.nextRing = now + 1350;
+      this.audio?.alarmBell({ x: a.x, y: 2.2, z: a.z });
+    }
+  }
 
   _step(dt, now) {
     const input = this.input;

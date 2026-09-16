@@ -91,9 +91,21 @@ export function roomSigns() {
  * 바깥벽 "안에" 끼워 넣는다. 벽보다 4cm 두꺼워서 안팎으로 2cm 씩 도드라지지만
  * 지나다니는 길로는 나오지 않는다. 벽 살이 없는 자리에는 아예 걸지 않는다.
  * -------------------------------------------------------------------------- */
+/* 창의 크기는 층고에서 나온다. 저택(7m)의 2.8m 짜리 창을 3.6m 사무실 벽에
+ * 그대로 꽂으면 창 윗변이 천장을 뚫고 지붕 위로 올라간다. 사무실은 허리
+ * 높이에서 천장 몰딩 아래까지 이어지는 띠창이다 - 실제 사옥이 그렇다. */
+export function windowSpec() {
+  if (MAP.style === 'office') {
+    const top = MAP.height - 0.75, bottom = 0.95;
+    return { w: 4.2, h: top - bottom, y: (top + bottom) / 2, depth: MAP.height > 5 ? 0.44 : 0.5, step: 7 };
+  }
+  return { w: 1.9, h: 2.8, y: 3.6, depth: 0.44, step: 6 };
+}
+/** 저택 기준값. 예전부터 이 이름으로 가져다 쓰는 곳이 있어 남겨 둔다. */
 export const WINDOW = { w: 1.9, h: 2.8, y: 3.6, depth: 0.44 };
 
 export function exteriorWindows() {
+  const WINDOW = windowSpec();
   const i = MAP.interior;
   const walls = [
     { axis: 'x', plane: i.minX, from: i.minZ, to: i.maxZ },
@@ -104,14 +116,14 @@ export function exteriorWindows() {
   const out = [];
   const y0 = WINDOW.y - WINDOW.h / 2, y1 = WINDOW.y + WINDOW.h / 2;
   for (const wall of walls) {
-    for (let along = wall.from + 4.5; along <= wall.to - 4.5; along += 6) {
+    for (let along = wall.from + 4.5; along <= wall.to - 4.5; along += WINDOW.step) {
       const edges = [along - WINDOW.w / 2, along, along + WINDOW.w / 2];
       if (!edges.every((e) => wallSolidAt(wall.axis, wall.plane, e, y0, y1))) continue;
       out.push({
         axis: wall.axis, plane: wall.plane, along,
         x: wall.axis === 'x' ? wall.plane : along,
         z: wall.axis === 'x' ? along : wall.plane,
-        y: WINDOW.y,
+        y: WINDOW.y, w: WINDOW.w, h: WINDOW.h, depth: WINDOW.depth,
       });
     }
   }

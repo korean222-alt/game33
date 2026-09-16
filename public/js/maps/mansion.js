@@ -40,6 +40,7 @@ const MAP = {
   floorColor: 0xb6afa3, wallColor: 0xebe2d0, ceilColor: 0xd9d1bf,
   // 저택 껍데기. 이 사각형 안이 실내고, 밖은 하늘이 보이는 야외다.
   interior: { minX: -35, maxX: 35, minZ: -26, maxZ: 26 },
+  style: 'mansion',   // world/visuals 가 내장재와 조명 기구를 고르는 열쇠
   fenceHeight: 3.2,
   doorHeight: 2.1,
 };
@@ -402,8 +403,10 @@ const PROPS = [
   { model: 'well', x: 0, z: -36, ry: 0, s: 1 },             // 후원
 ];
 for (const p of PROPS) {
-  const [w, h, d] = MODELS[p.model].fit.size ?? [1.6, MODELS[p.model].fit.height, 1.6];
+  const def = MODELS[p.model];
+  const [w, h, d] = def.fit.size ?? [1.6, def.fit.height, 1.6];
   p.col = { w: w * p.s, h: h * p.s, d: d * p.s };
+  p.shape = def.placeholder?.type === 'cylinder' ? 'cylinder' : 'box';
 }
 
 

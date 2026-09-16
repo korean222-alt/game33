@@ -14,6 +14,7 @@ import {
   EVIDENCE_SECONDS, SHOUT_COOLDOWN,
 } from './constants.js';
 import { now, dist2D, at3, emitNoise } from './util.js';
+import { pullAlarm, ALARM_SECONDS } from './events.js';
 import { makeWorld } from './world.js';
 
 export function interactionTarget(room, player) {
@@ -42,6 +43,12 @@ export function interactionTarget(room, player) {
   }
   for (const e of room.evidence) {
     if (!e.taken) consider('evidence', e.id, e, EVIDENCE_SECONDS, `${e.label} 회수`);
+  }
+  /* 화재경보기. 이미 울고 있는 것은 다시 당길 수 없다 - 8초를 벌었으면
+   * 그 8초 안에 움직이라는 뜻이고, 무한히 붙잡고 있는 도구가 아니다. */
+  for (const alarm of room.map.ALARMS || []) {
+    if ((room.alarmUntil?.get(alarm.id) || 0) > now()) continue;
+    consider('alarm', alarm.id, alarm, ALARM_SECONDS, `${alarm.label} 당기기`);
   }
   for (const other of room.players.values()) {
     if (other === player || !other.downed) continue;
@@ -102,6 +109,10 @@ export function completeInteraction(room, player, target, io) {
     io.to(room.code).emit('evidenceTaken', {
       id: item.id, by: player.id, label: item.label, x: item.x, z: item.z,
     });
+  } else if (target.kind === 'alarm') {
+    if (!pullAlarm(room, target.id, player.id, io)) return;
+    // 당기는 소리 자체는 숨길 수 없다. 바로 옆에 있는 자에게는 그냥 들킨다.
+    emitNoise(room, player.x, player.z, NOISE.doorUnlock, 'alarm-pull', player.id);
   } else if (target.kind === 'revive') {
     const mate = room.players.get(target.id);
     if (!mate || !mate.downed) return;

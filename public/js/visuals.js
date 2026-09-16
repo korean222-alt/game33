@@ -21,9 +21,13 @@ export function roomMaterials() {
     t.anisotropy = 4;
     return t;
   };
+  /* 도장면 색은 맵이 정한다. 저택의 따뜻한 미색(0xe8dfca)을 사무실에 그대로
+   * 쓰면, 천장과 형광등만 바꿔 놓아도 여전히 남의 집처럼 보인다. */
   return {
-    plaster: new THREE.MeshStandardMaterial({ color: 0xe8dfca, roughness: .82 }),
-    brass: new THREE.MeshStandardMaterial({ color: 0xbfa16b, roughness: .3, metalness: .8 }),
+    plaster: new THREE.MeshStandardMaterial({ color: MAP.wallColor ?? 0xe8dfca, roughness: .82 }),
+    // 벽의 띠. 저택은 놋쇠 몰딩, 사무실은 알루미늄 걸레받이와 천장 몰딩이다.
+    brass: new THREE.MeshStandardMaterial({
+      color: MAP.style === 'office' ? 0x8e959a : 0xbfa16b, roughness: .3, metalness: .8 }),
     floor: new THREE.MeshStandardMaterial({
       map: tex('concrete-color.jpg', true), normalMap: tex('concrete-normal.jpg'),
       normalScale: new THREE.Vector2(.65,.65), roughnessMap: tex('concrete-rough.jpg'),
@@ -65,51 +69,90 @@ export function dressRoom(scene, renderer) {
 
   const inner = MAP.interior;
   const spanX = inner.maxX - inner.minX, spanZ = inner.maxZ - inner.minZ;
+  /* 내장재는 맵마다 다르다.
+   *
+   *  저택의 우물반자 · 샹들리에 · 양탄자 · 금박 이름표를 사무실에 그대로
+   *  얹었더니, 3.6m 천장에 촛대 샹들리에가 달리고 문마다 놋쇠 현판이 붙은
+   *  이상한 건물이 나왔다. 두 양식을 여기서 갈라 놓는다. */
+  const office = MAP.style === 'office';
+  const signColor = office ? '#7fd4e6' : '#d6bc82';
 
-  // 천장 우물반자. 실내 전체를 덮는다 (예전에는 저택 절반 크기에서 끊겼다).
-  for (let x = inner.minX + 3; x <= inner.maxX - 3; x += 6) box(x, 6.94, 0, .1, .1, spanZ - .4, wood);
-  for (let z = inner.minZ + 3; z <= inner.maxZ - 3; z += 6) box(0, 6.94, z, spanX - .4, .1, .1, wood);
+  if (office) {
+    /* 시스템 천장. T 바 격자와 매입 형광등.
+     *
+     *  격자를 1.2m 마다 그리면 92×60 방 하나에 상자가 백 개 넘게 들어간다.
+     *  6m 간격의 굵은 줄만 그려도 "천장이 판으로 나뉘어 있다" 는 인상은 나고,
+     *  그 아래 달린 형광등이 나머지를 설명한다. */
+    const tbar = new THREE.MeshStandardMaterial({ color: 0xb0b6b9, roughness: .55, metalness: .3 });
+    const panel = new THREE.MeshStandardMaterial({ color: 0xdfe6ea, roughness: .85 });
+    const tube = new THREE.MeshStandardMaterial({
+      color: 0xf2f8ff, emissive: 0xdcecff, emissiveIntensity: 2.6 });
+    const ceil = MAP.height - .04;
+    for (let x = inner.minX + 3; x <= inner.maxX - 3; x += 6) box(x, ceil, 0, .08, .05, spanZ - .4, tbar);
+    for (let z = inner.minZ + 3; z <= inner.maxZ - 3; z += 6) box(0, ceil, z, spanX - .4, .05, .08, tbar);
 
-  // 샹들리에. 줄기는 천장에서 고리까지 이어 놓는다 - 예전에는 등 높이와 상관없이
-  // y=6.2 에 고정이라, 낮게 달린 복도등에서는 줄기와 고리가 따로 떠 있었다.
-  for (const L of LIGHTS.filter((l) => l.kind !== 'lamp')) {
-    const ringY = L.y - .15;
-    // 줄기 꼭대기는 천장 속으로 6cm 밀어 넣는다. 천장면(y = MAP.height)과 딱
-    // 맞추면 깊이 값이 같아져 카메라가 움직일 때마다 깜빡인다(z-fighting).
-    const stem = Math.max(.2, MAP.height + .06 - ringY);
-    box(L.x, ringY + stem / 2, L.z, .07, stem, .07, brass);
-    const radius = 1.15;
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, .035, 6, 32), brass);
-    ring.rotation.x = Math.PI / 2; ring.position.set(L.x, ringY, L.z); scene.add(ring);
-    for (let i = 0; i < 8; i++) {
-      const a = i * Math.PI / 4;
-      box(L.x + Math.cos(a) * radius, L.y, L.z + Math.sin(a) * radius, .09, .3, .09, glow);
+    // 매입 형광등. 1.2 × 0.3m 판 두 줄이 한 등이다.
+    for (const L of LIGHTS.filter((l) => l.kind !== 'lamp')) {
+      box(L.x, MAP.height - .07, L.z, 1.28, .09, .34, panel);
+      for (const dz of [-.08, .08]) box(L.x, MAP.height - .11, L.z + dz, 1.18, .03, .1, tube);
+    }
+  } else {
+    // 천장 우물반자. 실내 전체를 덮는다 (예전에는 저택 절반 크기에서 끊겼다).
+    for (let x = inner.minX + 3; x <= inner.maxX - 3; x += 6) box(x, 6.94, 0, .1, .1, spanZ - .4, wood);
+    for (let z = inner.minZ + 3; z <= inner.maxZ - 3; z += 6) box(0, 6.94, z, spanX - .4, .1, .1, wood);
+
+    // 샹들리에. 줄기는 천장에서 고리까지 이어 놓는다 - 예전에는 등 높이와 상관없이
+    // y=6.2 에 고정이라, 낮게 달린 복도등에서는 줄기와 고리가 따로 떠 있었다.
+    for (const L of LIGHTS.filter((l) => l.kind !== 'lamp')) {
+      const ringY = L.y - .15;
+      // 줄기 꼭대기는 천장 속으로 6cm 밀어 넣는다. 천장면(y = MAP.height)과 딱
+      // 맞추면 깊이 값이 같아져 카메라가 움직일 때마다 깜빡인다(z-fighting).
+      const stem = Math.max(.2, MAP.height + .06 - ringY);
+      box(L.x, ringY + stem / 2, L.z, .07, stem, .07, brass);
+      const radius = 1.15;
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, .035, 6, 32), brass);
+      ring.rotation.x = Math.PI / 2; ring.position.set(L.x, ringY, L.z); scene.add(ring);
+      for (let i = 0; i < 8; i++) {
+        const a = i * Math.PI / 4;
+        box(L.x + Math.cos(a) * radius, L.y, L.z + Math.sin(a) * radius, .09, .3, .09, glow);
+      }
+    }
+
+    // 양탄자. 방 안에 들어가는 크기로만 깐다 - 예전 현관홀 양탄자는 26m 라
+    // 벽을 뚫고 앞마당까지 삐져나가 있었다.
+    for (const r of roomRugs()) {
+      const mat = new THREE.MeshStandardMaterial({ color: r.grand ? 0x58232b : 0x233d39, roughness: .98 });
+      const rug = new THREE.Mesh(new THREE.PlaneGeometry(r.w, r.d), mat);
+      rug.rotation.x = -Math.PI / 2; rug.position.set(r.x, .008, r.z); scene.add(rug);
+      for (const x of [-r.w / 2 + .15, r.w / 2 - .15]) box(r.x + x, .012, r.z, .025, .005, r.d - .3, brass);
+      for (const z of [-r.d / 2 + .15, r.d / 2 - .15]) box(r.x, .012, r.z + z, r.w - .3, .005, .025, brass);
     }
   }
 
-  // 양탄자. 방 안에 들어가는 크기로만 깐다 - 예전 현관홀 양탄자는 26m 라
-  // 벽을 뚫고 앞마당까지 삐져나가 있었다.
-  for (const r of roomRugs()) {
-    const mat = new THREE.MeshStandardMaterial({ color: r.grand ? 0x58232b : 0x233d39, roughness: .98 });
-    const rug = new THREE.Mesh(new THREE.PlaneGeometry(r.w, r.d), mat);
-    rug.rotation.x = -Math.PI / 2; rug.position.set(r.x, .008, r.z); scene.add(rug);
-    for (const x of [-r.w / 2 + .15, r.w / 2 - .15]) box(r.x + x, .012, r.z, .025, .005, r.d - .3, brass);
-    for (const z of [-r.d / 2 + .15, r.d / 2 - .15]) box(r.x, .012, r.z + z, r.w - .3, .005, .025, brass);
-  }
-
   // 방 이름표 / 저택 현판 / 창문 / 액자는 decor-layout 이 벽에서 찾아 준 자리에만.
-  for (const s of roomSigns()) sign(scene, s.name, s.label, s.x, s.y, s.z, '#d6bc82', s.width, s.ry);
+  // 사무실 이름표에는 한글 방 이름을 크게 쓴다. 영문 구역 이름은 코드가 쓰는
+  // 열쇠일 뿐이고, 화면에서 읽어야 하는 것은 "대회의실" 쪽이다.
+  for (const s of roomSigns()) {
+    if (office) sign(scene, s.label, s.name, s.x, s.y, s.z, signColor, s.width, s.ry);
+    else sign(scene, s.name, s.label, s.x, s.y, s.z, signColor, s.width, s.ry);
+  }
   const plaque = estatePlaque();
-  if (plaque) sign(scene, 'RAVENWOOD', 'ESTATE / TACTICAL OPERATIONS', plaque.x, plaque.y, plaque.z, '#d6bc82', plaque.width, plaque.ry);
+  if (plaque) sign(scene, 'RAVENWOOD', 'ESTATE / TACTICAL OPERATIONS', plaque.x, plaque.y, plaque.z, signColor, plaque.width, plaque.ry);
 
   const glass = new THREE.MeshStandardMaterial({
     color: 0xadc9d6, emissive: 0x84aabe, emissiveIntensity: .65, roughness: .3, metalness: .2,
   });
+  // 창틀. 저택은 놋쇠, 사무실은 알루미늄 커튼월이다.
+  const mullion = office
+    ? new THREE.MeshStandardMaterial({ color: 0x8d949a, roughness: .35, metalness: .8 })
+    : brass;
   for (const win of exteriorWindows()) {
-    const across = WINDOW.depth, flat = win.axis === 'x';
-    box(win.x, win.y, win.z, flat ? across : WINDOW.w, WINDOW.h, flat ? WINDOW.w : across, glass);
-    box(win.x, win.y, win.z, flat ? across + .01 : .07, WINDOW.h, flat ? .07 : across + .01, brass);
-    box(win.x, win.y, win.z, flat ? across + .01 : WINDOW.w, .07, flat ? WINDOW.w : across + .01, brass);
+    const across = win.depth, flat = win.axis === 'x';
+    box(win.x, win.y, win.z, flat ? across : win.w, win.h, flat ? win.w : across, glass);
+    box(win.x, win.y, win.z, flat ? across + .01 : .07, win.h, flat ? .07 : across + .01, mullion);
+    box(win.x, win.y, win.z, flat ? across + .01 : win.w, .07, flat ? win.w : across + .01, mullion);
+    // 사무실 띠창은 폭이 넓어서 가운데 세로 멀리언이 하나 더 들어간다.
+    if (office) box(win.x, win.y, win.z, flat ? across + .01 : .06, win.h, flat ? .06 : across + .01, mullion);
   }
 
   for (const a of grandHallArt()) {

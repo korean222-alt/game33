@@ -8,7 +8,11 @@ import { AssetManager } from '../public/js/assets.js';
 import { MODELS, SETTINGS_DEFAULT } from '../public/js/config.js';
 
 /* 역할별 캐릭터(선택)는 저장소에 넣지 않는다. 사용자가 받아 넣으면 그때만
- * 쓰이고, 없으면 기본 캐릭터로 내려간다. 필수 모델만 검사한다. */
+ * 쓰이고, 없으면 기본 캐릭터로 내려간다. 필수 모델만 검사한다.
+ *
+ * lazy(맵 전용 소품)는 브라우저에서 미리 받지 않을 뿐 저장소에는 있다.
+ * 중심·바닥·치수 검사는 똑같이 받아야 한다 - 이 검사가 사무실 화분이 3m
+ * 짜리로 구워진 것을 잡아 줄 자리다. */
 const REQUIRED = Object.entries(MODELS).filter(([, model]) => !model.optional);
 import { LocalPlayer } from '../public/js/player.js';
 import { Entities } from '../public/js/entities.js';
@@ -22,7 +26,11 @@ assets.loader = { loadAsync: async url => {
   const bytes = await fs.readFile(new URL('../public' + url, import.meta.url));
   return loader.parseAsync(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), '');
 } };
+/* 두 번 부른다. 인자 없는 호출이 "선택 모델이 없으면 기본 캐릭터로" 연결을
+ * 세워 주고(아래 fallback 검사가 그걸 본다), 두 번째 호출이 맵 전용 소품을
+ * 마저 받는다. */
 await assets.loadAll();
+await assets.loadAll(Object.keys(MODELS).filter((key) => MODELS[key].lazy));
 
 test('every configured model exists and has valid embedded glTF data', async () => {
   assert.equal(assets.missing.length, 0);

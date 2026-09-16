@@ -36,6 +36,39 @@ export const MODELS = {
   well:       { url: '/assets/models/well.glb',        scale: 1, rotY: 0, fit: { height: 2.35 },
                 placeholder: { type: 'cylinder', r: 1.05, h: 2.35, color: 0x555049 } },
 
+  // --- 사무실 소품 ---
+  //
+  //  scripts/blender-office-props.py 로 굽는다. fit.size 는 그 스크립트가 찍어
+  //  주는 실측 치수를 그대로 옮긴 것이다 (모형을 고치면 스크립트를 다시 돌려
+  //  여기 숫자도 같이 갱신한다 - 어긋나면 소품이 바닥에 파묻히거나 뜬다).
+  //
+  //  lazy: 사무실 맵을 고른 사람만 받는다. 저택만 하는 사람에게 520KB 를
+  //  미리 내려보내지 않으려는 것 - 매대 4.78MB 를 모두가 받고 있던 전례가 있다.
+  monitor:     { url: '/assets/models/monitor.glb',     scale: 1, rotY: 0, lazy: true,
+                 fit: { size: [0.545, 0.458, 0.14] },
+                 placeholder: { type: 'box', w: 0.545, h: 0.458, d: 0.14, color: 0x1b1d20 } },
+  officeChair: { url: '/assets/models/officeChair.glb', scale: 1, rotY: 0, lazy: true,
+                 fit: { size: [0.577, 0.773, 0.587] },
+                 placeholder: { type: 'box', w: 0.577, h: 0.773, d: 0.587, color: 0x2b3038 } },
+  serverRack:  { url: '/assets/models/serverRack.glb',  scale: 1, rotY: 0, lazy: true,
+                 fit: { size: [0.635, 2.0, 0.985] },
+                 placeholder: { type: 'box', w: 0.635, h: 2.0, d: 0.985, color: 0x141619 } },
+  copier:      { url: '/assets/models/copier.glb',      scale: 1, rotY: 0, lazy: true,
+                 fit: { size: [0.7, 1.105, 0.8] },
+                 placeholder: { type: 'box', w: 0.7, h: 1.105, d: 0.8, color: 0xbdc0c2 } },
+  waterCooler: { url: '/assets/models/waterCooler.glb', scale: 1, rotY: 0, lazy: true,
+                 fit: { size: [0.34, 1.34, 0.405] },
+                 placeholder: { type: 'box', w: 0.34, h: 1.34, d: 0.405, color: 0xd7dadb } },
+  vending:     { url: '/assets/models/vending.glb',     scale: 1, rotY: 0, lazy: true,
+                 fit: { size: [0.92, 1.9, 0.81] },
+                 placeholder: { type: 'box', w: 0.92, h: 1.9, d: 0.81, color: 0x2a3038 } },
+  plantTall:   { url: '/assets/models/plantTall.glb',   scale: 1, rotY: 0, lazy: true,
+                 fit: { size: [0.566, 1.394, 0.565] },
+                 placeholder: { type: 'cylinder', r: 0.28, h: 1.394, color: 0x24522b } },
+  confTable:   { url: '/assets/models/confTable.glb',   scale: 1, rotY: 0, lazy: true,
+                 fit: { size: [3.6, 0.779, 1.4] },
+                 placeholder: { type: 'box', w: 3.6, h: 0.779, d: 1.4, color: 0x57432f } },
+
   // --- 캐릭터 (대원 · 용의자 · 민간인이 같은 모델을 쓰고 색만 바꾼다)
   //     첨부한 Mixamo FBX 묶음을 scripts/import-animations.mjs 로 합친 파일이다.
   //     클립 16개(대기/조준/앉기/걷기/달리기/측면/후진/사격/재장전/점프/피격/사망)가

@@ -80,7 +80,9 @@ export function finishMap(map) {
     ...map.FURNITURE.map((f) => ({ ...f, kind: 'prop' })),
     ...map.PROPS.map((p) => ({
       x: p.x, z: p.z, y: p.yOff || 0, ...p.col, ry: p.ry || 0, kind: 'prop',
-      shape: p.model === 'crate' ? 'box' : 'cylinder',
+      // 통(cylinder)이냐 상자냐. 맵 파일이 MODELS 의 placeholder 모양에서
+      // 뽑아 넣는다 - 서버랙을 원통으로 막으면 모서리로 총알이 샌다.
+      shape: p.shape || 'box',
     })),
   ];
 

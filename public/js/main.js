@@ -29,6 +29,7 @@ const state = {
   // 끊긴 뒤 자리를 이어받으려고 기다리는 중이면 { code, since }.
   rejoin: null,
   rejoinTimer: 0,
+  lobbyMapId: null,
 };
 
 /* ========================================================================== *
@@ -330,6 +331,7 @@ function applyLobby(l) {
     ul.appendChild(li);
   }
 
+  renderMapPicker(l);
   for (const b of $('botSeg').children) {
     b.setAttribute('aria-pressed', String(Number(b.dataset.n) === l.botCount));
   }
@@ -342,6 +344,39 @@ function applyLobby(l) {
   $('btnStart').disabled = !(isHost && others >= 1 && allReady);
   $('btnStart').textContent = allReady ? '작전 브리핑 시작' : '전원 준비 대기 중';
   if (state.briefing) updateBriefingStatus();
+}
+
+/**
+ * 작전 구역 고르기.
+ *
+ *  단추는 서버가 보내 준 목록(l.maps)으로 그린다 - 맵을 하나 더 넣으면 여기를
+ *  고칠 일이 없다. 고르는 순간 그 맵의 소품을 미리 받아 두므로, 브리핑이
+ *  끝나고 경기가 뜰 때 로딩으로 되돌아가지 않는다.
+ */
+function renderMapPicker(l) {
+  const seg = $('mapSeg');
+  const maps = l.maps || [];
+  if (seg.dataset.ids !== maps.map((m) => m.id).join(',')) {
+    seg.dataset.ids = maps.map((m) => m.id).join(',');
+    seg.innerHTML = '';
+    for (const m of maps) {
+      const b = document.createElement('button');
+      b.dataset.m = m.id;
+      b.textContent = m.label;
+      b.addEventListener('click', () => {
+        state.socket.emit('setRoomConfig', { mapId: m.id });
+        void state.game?.preloadMap(m.id);
+      });
+      seg.appendChild(b);
+    }
+  }
+  for (const b of seg.children) b.setAttribute('aria-pressed', String(b.dataset.m === l.mapId));
+  $('mapNote').textContent = maps.find((m) => m.id === l.mapId)?.blurb || '';
+  // 방에 들어와 있는 사람도 그 맵 소품이 필요하다 (방장이 바꿨을 수 있다).
+  if (l.mapId && state.lobbyMapId !== l.mapId) {
+    state.lobbyMapId = l.mapId;
+    void state.game?.preloadMap(l.mapId);
+  }
 }
 
 function updateBriefingStatus() {

@@ -53,10 +53,13 @@ export class AssetManager {
     return this.cache;
   }
 
-  /** 실제로 불러올 모델 키 목록 (넣지 않은 역할별 모델은 뺀다). */
+  /** 실제로 불러올 모델 키 목록 (넣지 않은 역할별 모델과 맵 전용 모델은 뺀다). */
   async _availableKeys() {
-    const optional = Object.keys(MODELS).filter((key) => MODELS[key].optional);
-    if (!optional.length) return Object.keys(MODELS);
+    /* lazy 는 특정 맵에서만 쓰는 소품이다. 맵을 고르고 나서 loadAll(map.models)
+     * 로 받는다 - 저택만 하는 사람이 사무실 소품을 미리 받을 이유가 없다. */
+    const eager = Object.keys(MODELS).filter((key) => !MODELS[key].lazy);
+    const optional = eager.filter((key) => MODELS[key].optional);
+    if (!optional.length) return eager;
     let present = [];
     try {
       const response = await fetch(ROLE_MANIFEST, { cache: 'no-cache' });
@@ -67,7 +70,7 @@ export class AssetManager {
       if (present.includes(key)) continue;
       this.cache.set(key, { fallback: MODELS[key].fallback || 'character', animations: [], isPlaceholder: false });
     }
-    return Object.keys(MODELS).filter((key) => !MODELS[key].optional || present.includes(key));
+    return eager.filter((key) => !MODELS[key].optional || present.includes(key));
   }
 
   async load(key) {

@@ -21,6 +21,7 @@
  *  동기 코드라 그 사이에 다른 방이 끼어들 수 없다.
  * ========================================================================== */
 import { MANSION } from './maps/mansion.js';
+import { OFFICE } from './maps/office.js';
 import { useGeometry } from './map-geometry.js';
 
 export {
@@ -30,7 +31,7 @@ export {
 } from './map-geometry.js';
 
 /** 고를 수 있는 맵. 로비의 맵 선택이 이 순서대로 나온다. */
-export const MAPS = [MANSION];
+export const MAPS = [MANSION, OFFICE];
 export const DEFAULT_MAP_ID = MANSION.id;
 
 const byId = new Map(MAPS.map((m) => [m.id, m]));

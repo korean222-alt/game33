@@ -563,6 +563,43 @@ export class GameAudio {
     this._voice(bus, { at: 0.3, duration: 0.06, level: 0.26, frequency: 700 });
   }
 
+  /**
+   * 사무실 기계 소리.
+   *
+   *  NPC 에게는 서버가 이미 소리로 전달했다. 여기서 내는 것은 플레이어가
+   *  "지금 저기서 소리가 났다" 를 같은 순간에 듣게 하려는 것이다 - 안 그러면
+   *  경비가 왜 갑자기 고개를 돌렸는지 알 수 없다.
+   */
+  machine(position, type) {
+    const bus = this._bus(position);
+    if (!bus) return;
+    if (type === 'copier') {
+      // 급지 롤러가 도는 낮은 소리 + 종이가 밀려 나오는 마찰음
+      this._voice(bus, { duration: 0.9, level: 0.26, frequency: 150 });
+      this._voice(bus, { at: 0.25, duration: 0.5, level: 0.16, frequency: 2400 });
+      this._voice(bus, { at: 0.85, duration: 0.12, level: 0.2, frequency: 420 });
+    } else if (type === 'lift') {
+      // 도착음 두 번 + 문이 열리는 소리
+      this._voice(bus, { duration: 0.16, level: 0.34, frequency: 880, tone: true });
+      this._voice(bus, { at: 0.2, duration: 0.22, level: 0.3, frequency: 660, tone: true });
+      this._voice(bus, { at: 0.55, duration: 0.7, level: 0.2, frequency: 190 });
+    } else {
+      this._voice(bus, { duration: 0.7, level: 0.14, frequency: 110 });
+    }
+  }
+
+  /** 화재경보. 두 음을 번갈아 내는 전형적인 벨소리 한 주기. */
+  alarmBell(position = null) {
+    const bus = this._bus(position);
+    if (!bus) return;
+    for (let i = 0; i < 4; i++) {
+      this._voice(bus, {
+        at: i * 0.33, duration: 0.26, level: 0.36,
+        frequency: i % 2 ? 2300 : 3100, tone: true,
+      });
+    }
+  }
+
   /** 투척물 안전핀과 던지는 동작. */
   pin() {
     const bus = this._bus();

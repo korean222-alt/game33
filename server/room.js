@@ -13,6 +13,7 @@ import {
 import { startingGrenades } from '../public/js/grenades.js';
 import { WEAPONS, PLAYER_MAX_HP, RECONNECT_GRACE_MS } from './constants.js';
 import { now } from './util.js';
+import { resetEvents } from './events.js';
 
 /** @type {Map<string, Room>} */
 export const rooms = new Map();
@@ -94,6 +95,7 @@ export class Room {
     this.nextGrenadeId = 1;
     this.phaseEnteredAt = 0;
     this.doorQueue = [];
+    resetEvents(this);   // 맵이 스스로 내는 소리 (사무실의 소음원·경보기)
   }
 
   get alivePlayers() { return [...this.players.values()].filter((p) => p.alive); }

@@ -10,6 +10,7 @@ import { WEAPONS, BLEED_OUT_MS } from './constants.js';
 import { now, dist2D } from './util.js';
 import { useRoomMap } from './room.js';
 import { updateDoorQueue } from './door-actions.js';
+import { updateAmbient, updateAlarms } from './events.js';
 import { killPlayer, shotTargets, updateGrenades } from './combat.js';
 import { makeWorld } from './world.js';
 import { updateInteractions } from './interactions.js';
@@ -34,6 +35,9 @@ export function tickRoom(room, io) {
 
   if (powerCutDue(room, t)) cutPower(room, io);
   updateDoorQueue(room, io);
+  // 맵이 스스로 내는 소리. 이 맵에 없으면 둘 다 즉시 돌아온다.
+  updateAmbient(room, io);
+  updateAlarms(room, io);
   updateGrenades(room, dt, io);
 
   const world = makeWorld(room, dt, io);

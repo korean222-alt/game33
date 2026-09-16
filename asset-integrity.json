@@ -15,6 +15,38 @@
     "bytes": 119892,
     "sha256": "14f685858570b89e8f361c3ecc911887a518131ead3bd75d1a9fe4c41842b26b"
   },
+  "public/assets/models/monitor.glb": {
+    "bytes": 20904,
+    "sha256": "be0bd796620021f4850dd1990886aff5d4e7c683952c1370b59a09e89053f1c6"
+  },
+  "public/assets/models/officeChair.glb": {
+    "bytes": 97532,
+    "sha256": "518aeb393a82953b55a46fb8771f815882f5e1cf5bbb32053e3e393c3eac6d3c"
+  },
+  "public/assets/models/serverRack.glb": {
+    "bytes": 120852,
+    "sha256": "608cf5896ddef5ca6b5f1f413f9570ea095df2e301327742b414012d21aa5b8e"
+  },
+  "public/assets/models/copier.glb": {
+    "bytes": 46260,
+    "sha256": "c59db83a85ecd5d4a51703f63804bf6fbeea2f868cd1fb23aff43d2529caefca"
+  },
+  "public/assets/models/waterCooler.glb": {
+    "bytes": 41884,
+    "sha256": "7cb652a17e5e2fa5d446c1d664b17394908784eadcdedbce780eebeb23d5100c"
+  },
+  "public/assets/models/vending.glb": {
+    "bytes": 58408,
+    "sha256": "624d0eecafee912c156e5e784e05fb82e6e4b688994d5cfcfcec813ed212d4f7"
+  },
+  "public/assets/models/plantTall.glb": {
+    "bytes": 91884,
+    "sha256": "7feb020c17be776a3b7aa5774e5e27b40cdbedab9ff4ed4b0c488bf20b15dc36"
+  },
+  "public/assets/models/confTable.glb": {
+    "bytes": 55164,
+    "sha256": "a30c5db0532f64efdd81ac1ed3c784c6ade830f08f90eb2610a1919fbe5f316a"
+  },
   "public/assets/models/character-animated.glb": {
     "bytes": 2001792,
     "sha256": "543bd94c8bad7157f9fe032d211617d32685209c3b9c5f9154dca73ca982b09e"

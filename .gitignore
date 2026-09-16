@@ -3,3 +3,6 @@ dist/
 .vercel/
 .DS_Store
 *.log
+
+# 파이썬 캐시 (scripts/*.py 를 import 해서 돌릴 때 생긴다)
+__pycache__/

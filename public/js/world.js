@@ -12,7 +12,7 @@ import {
   MAP, BACKUP_GENERATOR, WALLS, PROPS, LIGHTS, BOMB_SITES, FURNITURE, DOORWAYS, EXTRACTION,
 } from './map-data.js';
 import { DOOR, isBlocking } from './doors.js';
-import { wallSections } from './wall-sections.js';
+import { wallSections, OFFICE_BANDS } from './wall-sections.js';
 import { QUALITY } from './config.js';
 import { roomMaterials, dressRoom } from './visuals.js';
 
@@ -188,9 +188,14 @@ export class World {
     for (const w of WALLS) {
       const base = w.y || 0;
       // 상인방(문 위쪽 조각)과 담장은 띠 장식 없이 한 덩어리로 그린다.
+      /* 상인방(문 위 조각)과 담장은 띠 장식 없이 한 덩어리로 그린다.
+       * 사무실에서 그 한 덩어리를 'wall'(벽돌)로 두면 문마다 벽돌 인방이
+       * 얹힌 저택 복도가 된다 - 사무실은 같은 도장면으로 이어져야 한다. */
+      const office = MAP.style === 'office';
+      const solidMaterial = base > 0 ? (office ? 'plaster' : 'wall') : 'plaster';
       const bands = base > 0 || w.h < 3.4
-        ? [{ bottom: base, top: base + w.h, material: base > 0 ? 'wall' : 'plaster' }]
-        : wallSections(w.h).map((s) => ({ ...s }));
+        ? [{ bottom: base, top: base + w.h, material: solidMaterial }]
+        : wallSections(w.h, office ? OFFICE_BANDS : undefined).map((s) => ({ ...s }));
       const ceilingTop = Math.abs(base + w.h - MAP.height) < 0.001;
       if (ceilingTop) bands[bands.length - 1].top += CEILING_OVERLAP;
       for (const section of bands) {
@@ -237,9 +242,15 @@ export class World {
 
   /* ---- 문 --------------------------------------------------------------- */
   _buildDoors() {
-    const leafMat = new THREE.MeshStandardMaterial({ color: 0x3b2a1e, roughness: .68 });
-    const frameMat = new THREE.MeshStandardMaterial({ color: 0x2a1f16, roughness: .7 });
-    const knobMat = new THREE.MeshStandardMaterial({ color: 0xc3a46b, roughness: .3, metalness: .85 });
+    // 저택은 짙은 원목 + 놋쇠 손잡이, 사무실은 밝은 도장 문짝 + 알루미늄 레버.
+    const office = MAP.style === 'office';
+    const leafMat = new THREE.MeshStandardMaterial({
+      color: office ? 0xb9b3a6 : 0x3b2a1e, roughness: office ? .5 : .68 });
+    const frameMat = new THREE.MeshStandardMaterial({
+      color: office ? 0x6f7276 : 0x2a1f16, roughness: office ? .45 : .7,
+      metalness: office ? .5 : 0 });
+    const knobMat = new THREE.MeshStandardMaterial({
+      color: office ? 0xa8adb2 : 0xc3a46b, roughness: .3, metalness: .85 });
 
     for (const door of DOORWAYS) {
       // 경첩 축을 중심으로 도는 피벗. 회전은 보기용이고 충돌은 서버가 판정한다.
@@ -319,6 +330,14 @@ export class World {
       brass: new THREE.MeshStandardMaterial({ color: 0xc3a46b, roughness: .3, metalness: .8 }),
       hedge: new THREE.MeshStandardMaterial({ color: 0x1f3320, roughness: .98 }),
       metal: new THREE.MeshStandardMaterial({ color: 0x4a4f55, roughness: .45, metalness: .7 }),
+      // 사무실 쪽 재질. 저택의 나무·벨벳만 있으면 사무 가구가 전부 고재로
+      // 보인다 — 파티션도, 책상 상판도, 의자 등받이도.
+      laminate: new THREE.MeshStandardMaterial({ color: 0xd8d2c6, roughness: .42 }),
+      panel: new THREE.MeshStandardMaterial({ color: 0x5d6a72, roughness: .88 }),
+      fabric: new THREE.MeshStandardMaterial({ color: 0x35424c, roughness: .97 }),
+      carpet: new THREE.MeshStandardMaterial({ color: 0x33383c, roughness: 1 }),
+      plastic: new THREE.MeshStandardMaterial({ color: 0x23262a, roughness: .55 }),
+      paint: new THREE.MeshStandardMaterial({ color: 0xb9c2c6, roughness: .8 }),
       glass: new THREE.MeshStandardMaterial({
         color: 0x9fc0cc, roughness: .18, metalness: .1, transparent: true, opacity: .38,
       }),
