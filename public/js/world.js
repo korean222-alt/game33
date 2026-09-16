@@ -23,6 +23,20 @@ import { roomMaterials, dressRoom } from './visuals.js';
  */
 const LIGHT_INTENSITY_SCALE = 4;
 const DOOR_THICKNESS = 0.07;
+
+/** 씬에서 떼어 낸 가지의 지오메트리·재질·텍스처를 놓아 준다. */
+function disposeTree(root) {
+  const seen = new Set();
+  const free = (r) => { if (r && !seen.has(r)) { seen.add(r); r.dispose?.(); } };
+  root.traverse((o) => {
+    free(o.geometry);
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
+      if (!m) continue;
+      Object.values(m).filter((v) => v?.isTexture).forEach(free);
+      free(m);
+    }
+  });
+}
 /* 벽 꼭대기를 천장보다 이만큼 더 올려서 그린다.
  * 벽의 윗면(y = MAP.height)과 천장면(y = MAP.height)이 정확히 겹치면 깊이 값이
  * 같아져서, 카메라가 움직일 때마다 어느 쪽이 앞인지 뒤집히며 천장이 깨져 보인다
@@ -64,6 +78,37 @@ export class World {
     this.dust = dressRoom(s, this.renderer);
 
     return this;
+  }
+
+  /**
+   * 맵이 바뀌었다. 씬을 비우고 같은 Scene 객체 위에 다시 짓는다.
+   *
+   *  Scene 을 새로 만들면 Entities·LocalPlayer·뷰모델이 전부 옛 씬을 붙잡고
+   *  있어서 화면에서 사라진다. 그래서 그릇은 그대로 두고 내용물만 간다.
+   *  카메라(와 거기 달린 총·손전등)는 게임이 씬에 넣어 둔 것이라 남긴다.
+   *  모델 에셋은 assets 캐시에 있으므로 다시 받지 않는다 — 맵 교체가 로딩
+   *  화면으로 돌아가지 않는 이유다.
+   */
+  rebuild(qualityKey) {
+    const keep = this.scene.children.filter((o) => o.isCamera);
+    for (const child of [...this.scene.children]) {
+      if (keep.includes(child)) continue;
+      this.scene.remove(child);
+      disposeTree(child);
+    }
+    this.pointLights = [];
+    this.siteMarkers.clear();
+    this.evidenceMarkers.clear();
+    this.doorMeshes.clear();
+    this.power = true;
+    this.torch = null;          // _buildLights 가 다시 만든다
+    this.torchOn = false;
+    this.generatorLever = null;
+    this.generatorLamp = null;
+    this.extraction = null;
+    this.dust = null;
+    this._t = 0;
+    return this.build(qualityKey);
   }
 
   /* ---- 지면 / 천장 ------------------------------------------------------ */

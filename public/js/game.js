@@ -13,7 +13,7 @@
 
 import * as THREE from 'three';
 import { QUALITY, NET, PLAYER, loadSettings, saveSettings, guessQuality } from './config.js';
-import { rayObstacleDistance, isIndoors } from './map-data.js';
+import { rayObstacleDistance, isIndoors, setActiveMap, CURRENT_MAP } from './map-data.js';
 import { DOOR, DoorSet, rollDoorStates, DOOR_REACH } from './doors.js';
 import { GRENADE_ORDER, GRENADES, startingGrenades } from './grenades.js';
 import { AssetManager } from './assets.js';
@@ -470,6 +470,19 @@ export class Game {
       return;
     }
     this.audio?.stop();
+
+    /* 맵이 바뀌었으면 씬부터 다시 짓는다.
+     *
+     *  map-data.js 의 데이터는 살아 있는 연결이라 setActiveMap 한 번으로 벽도
+     *  방도 조명도 사무실 것으로 바뀌지만, 이미 그려 놓은 지오메트리는 저택
+     *  그대로다. 여기서 다시 짓지 않으면 사무실 좌표 위에 저택 벽이 서 있는
+     *  화면이 된다. 모델은 캐시에 있으므로 로딩 화면으로 돌아가지 않는다. */
+    if (d.mapId && d.mapId !== CURRENT_MAP.id) {
+      setActiveMap(d.mapId);
+      this.world.rebuild(this.settings.quality);
+      this.world.attachTorch(this.camera);
+    }
+
     this._doorPending = false;
     this.weapons = d.weapons;
     this.sites = d.sites;

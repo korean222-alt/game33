@@ -3,7 +3,7 @@
  *
  *  값을 만지러 오는 사람이 제일 먼저 여는 파일. 로직은 한 줄도 없다.
  * ========================================================================== */
-import { LIGHTS } from '../public/js/map-data.js';
+import { AREAS, LIGHTS } from '../public/js/map-data.js';
 
 export const TICK_HZ = 20;
 export const TICK_MS = 1000 / TICK_HZ;
@@ -51,6 +51,28 @@ export const DIFFICULTY = {
   hard: { hpMul: 1.25, dmgMul: 1.25, skill: 1.22, reactMul: 0.78, moraleMul: 0.8 },
 };
 
-export const OUTDOOR_ZONES = ['COURTYARD', 'WEST YARD', 'EAST YARD', 'GARDEN'];
-/* 담장 밖 배선으로 도는 야외등. 저택이 정전돼도 이것만은 남는다. */
-export const OUTDOOR_LIGHTS = LIGHTS.filter((L) => L.kind === 'lamp');
+/* 야외 구역 이름과 야외등.
+ *
+ *  둘 다 지금 켜진 맵에서 나온다. 예전에는 저택의 구역 이름 넷을 상수 배열로
+ *  박아 두고 야외등도 모듈을 읽는 순간 한 번 걸러 두었다. 그러면 사무실 맵에서
+ *  "실외" 가 하나도 없는 것이 되고, 정전 때 꺼지면 안 되는 가로등까지 같이
+ *  꺼진다. 배열 자체를 열쇠로 캐시하므로 맵을 오가도 매번 다시 세지 않는다. */
+const outdoorCache = new WeakMap();
+export function outdoorZones() {
+  let names = outdoorCache.get(AREAS);
+  if (!names) {
+    names = AREAS.filter((a) => a.outdoor).map((a) => a.name);
+    outdoorCache.set(AREAS, names);
+  }
+  return names;
+}
+/** 담장 밖 배선으로 도는 야외등. 건물이 정전돼도 이것만은 남는다. */
+const lampCache = new WeakMap();
+export function outdoorLights() {
+  let lamps = lampCache.get(LIGHTS);
+  if (!lamps) {
+    lamps = LIGHTS.filter((L) => L.kind === 'lamp');
+    lampCache.set(LIGHTS, lamps);
+  }
+  return lamps;
+}

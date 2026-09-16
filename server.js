@@ -32,7 +32,7 @@ import {
   MISSION_TIME_MS, DEFUSE_SECONDS,
 } from './server/constants.js';
 import { now, clamp, at3, makeRoomCode, emitNoise, npcPublic } from './server/util.js';
-import { rooms, Room, closeRoom } from './server/room.js';
+import { rooms, Room, closeRoom, useRoomMap } from './server/room.js';
 import { setupMission, checkMissionEnd, announceHold, dropExpiredHolds } from './server/mission.js';
 import { queueDoorAction } from './server/door-actions.js';
 import { resolveShot, throwGrenade } from './server/combat.js';
@@ -100,6 +100,8 @@ function cancelBriefing(room, io) {
 function matchStatePayload(room, self = null) {
   return {
     protocol: GAME_PROTOCOL,
+    // 어느 건물에서 뛰는지. 클라이언트는 이걸 보고 씬을 다시 짓는다.
+    mapId: room.mapId,
     endsAt: room.endsAt,
     // defused 는 이어 들어온 화면이 이미 해체된 지점을 꺼진 채로 그리는 데 쓴다.
     sites: room.sites.map((s) => ({ id: s.id, x: s.x, z: s.z, label: s.label, defused: !!s.defused })),
@@ -203,6 +205,16 @@ io.on('connection', (socket) => {
   let room = null;
   let me = null;
 
+  /* 무엇을 하든 이 방의 맵부터 켠다.
+   *
+   *  map-data.js 는 "지금 켜진 맵" 하나를 공유한다. 방 A 가 사무실이고 방 B 가
+   *  저택인데 B 의 입력을 A 의 콜라이더로 밀어내면 벽이 없는 곳에서 튕긴다.
+   *  핸들러는 전부 동기 코드라 한 번 켜 두면 그 안에서는 안전하다. */
+  const inRoom = (fn) => (...args) => {
+    if (room) useRoomMap(room);
+    return fn(...args);
+  };
+
   /** 완전히 나간다. 스스로 나가기를 눌렀거나, 경기 중이 아닐 때 끊긴 경우. */
   const leave = () => {
     if (!room || !me) { room = null; me = null; return; }
@@ -237,11 +249,13 @@ io.on('connection', (socket) => {
   };
 
   /* ---- 방 만들기 / 들어가기 -------------------------------------------- */
-  socket.on('createRoom', ({ name, weapon } = {}, cb) => {
+  socket.on('createRoom', ({ name, weapon, mapId } = {}, cb) => {
     leave();
     let code = makeRoomCode();
     while (rooms.has(code)) code = makeRoomCode();
-    room = new Room(code);
+    // Room 생성자가 곧바로 그 맵을 켠다. 아래 addPlayer 가 SPAWNS 를 읽으므로
+    // 순서가 중요하다 — 저택 시작 좌표로 사무실에 들어가면 벽 속이다.
+    room = new Room(code, mapId);
     rooms.set(code, room);
     me = room.addPlayer(socket, name, weapon);
     socket.join(code);
@@ -253,6 +267,8 @@ io.on('connection', (socket) => {
     const key = String(code || '').toUpperCase().trim();
     const r = rooms.get(key);
     if (!r) return cb?.({ ok: false, error: '그런 방 코드가 없어요.' });
+    // 들어갈 방의 맵으로 갈아 끼운다. 아래에서 SPAWNS 를 읽는다.
+    useRoomMap(r);
     if (room === r && me?.connected) return cb?.({ ok: true, you: me.id, lobby: room.lobbyState() });
 
     /* 같은 이름이 자리를 비워 두고 있으면 새 소켓을 그 자리에 이어 붙인다.
@@ -290,7 +306,7 @@ io.on('connection', (socket) => {
     io.to(room.code).emit('lobby', room.lobbyState());
   });
 
-  socket.on('setLoadout', ({ weapon, ready } = {}) => {
+  socket.on('setLoadout', inRoom(({ weapon, ready } = {}) => {
     if (!me || !room || room.state === 'active' || room.state === 'briefing') return;
     if (weapon && WEAPONS[weapon]) {
       me.weapon = weapon;
@@ -299,42 +315,51 @@ io.on('connection', (socket) => {
     }
     if (typeof ready === 'boolean') me.ready = ready;
     io.to(room.code).emit('lobby', room.lobbyState());
-  });
+  }));
 
-  socket.on('setRoomConfig', ({ botCount, difficulty } = {}) => {
+  socket.on('setRoomConfig', inRoom(({ botCount, difficulty, mapId } = {}) => {
     if (!room || !me || room.hostId !== me.id || room.state === 'active' || room.state === 'briefing') return;
     if (botCount) room.botCount = clamp(botCount | 0, 3, 14);
     if (difficulty && DIFFICULTY[difficulty]) room.difficulty = difficulty;
+    /* 맵을 바꾸면 이미 들어와 있는 대원들이 새 맵의 시작 지점에 서야 한다.
+     * 안 옮기면 저택 앞마당 좌표 그대로 사무실 로비 벽 속에 박힌다. */
+    if (mapId && room.setMap(mapId)) {
+      let i = 0;
+      for (const p of room.players.values()) {
+        const spawn = SPAWNS[i++ % SPAWNS.length];
+        p.x = spawn.x; p.z = spawn.z; p.y = 0; p.yaw = spawn.yaw; p.pitch = 0;
+      }
+    }
     io.to(room.code).emit('lobby', room.lobbyState());
-  });
+  }));
 
-  socket.on('startMatch', () => {
+  socket.on('startMatch', inRoom(() => {
     if (!room || !me || room.hostId !== me.id) return;
     if (room.state === 'active' || room.state === 'briefing') return;
     if (!room.connectedPlayers.every((p) => p.ready)) return;
     beginBriefing(room, io);
-  });
+  }));
 
-  socket.on('briefingReady', ({ id } = {}) => {
+  socket.on('briefingReady', inRoom(({ id } = {}) => {
     if (!room || !me || room.state !== 'briefing' || id !== room.briefingId) return;
     me.briefingReady = true;
     io.to(room.code).emit('lobby', room.lobbyState());
     if (room.connectedPlayers.every((p) => p.briefingReady)) startMatch(room, io);
-  });
+  }));
 
-  socket.on('cancelBriefing', () => {
+  socket.on('cancelBriefing', inRoom(() => {
     if (!room || !me || room.hostId !== me.id || room.state !== 'briefing') return;
     cancelBriefing(room, io);
     io.to(room.code).emit('lobby', room.lobbyState());
-  });
+  }));
 
   /* ---- 인게임 ---------------------------------------------------------- */
-  socket.on('input', (d) => {
+  socket.on('input', inRoom((d) => {
     if (!me || !room || room.state !== 'active' || !me.alive) return;
     applyPlayerInput(room, me, d);
-  });
+  }));
 
-  socket.on('shoot', (d, cb) => {
+  socket.on('shoot', inRoom((d, cb) => {
     if (!me || !room || room.state !== 'active' || !me.alive) return cb?.({ ok: false });
     const reply = (result) => cb?.({ ammo: me.ammo, shotSeq: me.shotSeq, ...result });
     if (d?.shotId !== undefined) {
@@ -364,24 +389,24 @@ io.on('connection', (socket) => {
     });
     emitNoise(room, me.x, me.z, NOISE.shot, 'shot', me.id);
     reply({ ok: true, ...res });
-  });
+  }));
 
-  socket.on('reload', () => {
+  socket.on('reload', inRoom(() => {
     if (!me || !room || room.state !== 'active' || !me.alive) return;
     const w = WEAPONS[me.weapon];
     if (me.reloadUntil > 0 || me.ammo >= w.mag || me.reserve <= 0) return;
     me.reloadUntil = now() + w.reload * 1000;
     emitNoise(room, me.x, me.z, NOISE.reload, 'reload', me.id);
     io.to(room.code).emit('playerReload', { id: me.id, duration: w.reload, ...at3(me) });
-  });
+  }));
 
-  socket.on('defuse', ({ siteId, active } = {}) => {
+  socket.on('defuse', inRoom(({ siteId, active } = {}) => {
     if (!me || !room || room.state !== 'active' || !me.alive) return;
     me.defusing = active ? siteId : null;
-  });
+  }));
 
   /* ---- 문 -------------------------------------------------------------- */
-  socket.on('door', ({ id, action } = {}, cb) => {
+  socket.on('door', inRoom(({ id, action } = {}, cb) => {
     if (!me || !room || room.state !== 'active' || !me.alive) return cb?.({ ok: false });
     const door = room.doors.get(id);
     if (!door) return cb?.({ ok: false, error: 'no-door' });
@@ -410,15 +435,15 @@ io.on('connection', (socket) => {
 
     queueDoorAction(room, door, action, spec, next, me.id, io);
     return cb?.({ ok: true, action, state: next, seconds: spec.seconds });
-  });
+  }));
 
   /* ---- 투척 장비 ------------------------------------------------------- */
-  socket.on('selectGrenade', ({ type } = {}) => {
+  socket.on('selectGrenade', inRoom(({ type } = {}) => {
     if (!me || !GRENADES[type]) return;
     me.selectedGrenade = type;
-  });
+  }));
 
-  socket.on('throw', ({ type, dx, dy, dz, power } = {}, cb) => {
+  socket.on('throw', inRoom(({ type, dx, dy, dz, power } = {}, cb) => {
     if (!me || !room || room.state !== 'active' || !me.alive) return cb?.({ ok: false });
     if (now() < me.blindUntil) return cb?.({ ok: false, error: 'blind' });
     if (![dx, dy, dz].every(Number.isFinite)) return cb?.({ ok: false });
@@ -430,13 +455,13 @@ io.on('connection', (socket) => {
       { x: dx / length, y: dy / length, z: dz / length }, clamp(+power || 1, 0.3, 1), io);
     if (ok) me.throwBusyUntil = now() + 700;
     cb?.({ ok, grenades: me.grenades });
-  });
+  }));
 
-  socket.on('shout', (payload) => {
+  socket.on('shout', inRoom((payload) => {
     if (!me || !room || room.state !== 'active' || !me.alive) return;
     const line = Number(payload?.line);
     shout(room, me, io, Number.isInteger(line) && line >= 0 && line < 16 ? line : 0);
-  });
+  }));
 
   socket.on('ping:rtt', (t0, cb) => cb?.(t0));
 

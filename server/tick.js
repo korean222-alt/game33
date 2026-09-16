@@ -8,6 +8,7 @@ import { powerCutDue } from '../public/js/power-state.js';
 import { updateSuspect, updateCivilian } from '../public/js/suspect-ai.js';
 import { WEAPONS, BLEED_OUT_MS } from './constants.js';
 import { now, dist2D } from './util.js';
+import { useRoomMap } from './room.js';
 import { updateDoorQueue } from './door-actions.js';
 import { killPlayer, shotTargets, updateGrenades } from './combat.js';
 import { makeWorld } from './world.js';
@@ -15,6 +16,8 @@ import { updateInteractions } from './interactions.js';
 import { dropExpiredHolds, cutPower, updateObjectives, finishMatch } from './mission.js';
 
 export function tickRoom(room, io) {
+  // 이 방의 맵을 켠다. 방마다 맵이 다를 수 있으므로 매 틱 맨 앞에서 한 번.
+  useRoomMap(room);
   const t = now();
   const dt = Math.min(0.25, (t - room.lastTick) / 1000);
   room.lastTick = t;

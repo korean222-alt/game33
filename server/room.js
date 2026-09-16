@@ -7,7 +7,9 @@
 import { DoorSet, rollDoorStates } from '../public/js/doors.js';
 import { resetPower } from '../public/js/power-state.js';
 import { TargetHistory } from '../public/js/shot-trace.js';
-import { SPAWNS } from '../public/js/map-data.js';
+import {
+  SPAWNS, DEFAULT_MAP_ID, getMap, hasMap, setActiveMap, mapChoices,
+} from '../public/js/map-data.js';
 import { startingGrenades } from '../public/js/grenades.js';
 import { WEAPONS, PLAYER_MAX_HP, RECONNECT_GRACE_MS } from './constants.js';
 import { now } from './util.js';
@@ -15,9 +17,24 @@ import { now } from './util.js';
 /** @type {Map<string, Room>} */
 export const rooms = new Map();
 
+/**
+ * 이 방의 맵을 켠다. 이 방을 건드리기 직전에 반드시 한 번 부른다.
+ *
+ *  맵 데이터는 map-data.js 의 "지금 켜진 맵" 하나로 공유된다. 방마다 다른
+ *  맵을 돌릴 수 있으려면 방을 만질 때마다 맞는 맵으로 갈아 끼워야 한다.
+ *  틱도 소켓 핸들러도 전부 동기 코드라, 한 번 켜고 그 안에서 하는 일 사이에
+ *  다른 방이 끼어들 수 없다. 같은 맵이면 setActiveMap 이 그냥 돌아온다.
+ */
+export function useRoomMap(room) {
+  setActiveMap(room.mapId);
+  return room;
+}
+
 export class Room {
-  constructor(code) {
+  constructor(code, mapId = DEFAULT_MAP_ID) {
     this.code = code;
+    this.mapId = hasMap(mapId) ? mapId : DEFAULT_MAP_ID;
+    setActiveMap(this.mapId);
     this.players = new Map();   // socketId -> player
     this.state = 'lobby';       // lobby | briefing | active | won | lost
     this.briefingId = 0;
@@ -30,6 +47,18 @@ export class Room {
     this.lastTick = now();
     this.seq = 0;
     this.resetMission();
+  }
+
+  /** 이 방이 쓰는 맵 데이터 전체. */
+  get map() { return getMap(this.mapId); }
+
+  /** 맵을 바꾼다 (대기실에서만). 문 묶음과 배치를 새로 뽑아야 한다. */
+  setMap(id) {
+    if (!hasMap(id) || id === this.mapId) return false;
+    this.mapId = id;
+    setActiveMap(id);
+    this.resetMission();
+    return true;
   }
 
   resetMission() {
@@ -164,6 +193,8 @@ export class Room {
       hostId: this.hostId,
       botCount: this.botCount,
       difficulty: this.difficulty,
+      mapId: this.mapId,
+      maps: mapChoices(),
       briefingId: this.briefingId,
       players: [...this.players.values()].map((p) => ({
         id: p.id, name: p.name, slot: p.slot, ready: p.ready,

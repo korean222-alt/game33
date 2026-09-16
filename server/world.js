@@ -10,7 +10,7 @@ import { DOOR, isBlocking } from '../public/js/doors.js';
 import { NOISE, brightnessAt } from '../public/js/perception.js';
 import { SUSPECT_EYE } from '../public/js/suspect-ai.js';
 import {
-  DIFFICULTY, OUTDOOR_ZONES, OUTDOOR_LIGHTS, PLAYER_EYE, SUSPECT_DAMAGE,
+  DIFFICULTY, outdoorZones, outdoorLights, PLAYER_EYE, SUSPECT_DAMAGE,
 } from './constants.js';
 import { now, dist2D, at3, emitNoise } from './util.js';
 import { damagePlayer } from './combat.js';
@@ -36,7 +36,7 @@ export function makeWorld(room, dt, io) {
     random: Math.random,
     /* 저택 전기가 끊기면 실내등은 계산에서 빠진다. 그래서 정전 뒤에는
      * 실내에서 서로가 잘 안 보인다 - 적도, 나도. */
-    brightness: (x, z) => brightnessAt(x, z, room.power ? LIGHTS : OUTDOOR_LIGHTS),
+    brightness: (x, z) => brightnessAt(x, z, room.power ? LIGHTS : outdoorLights()),
     playerById: (id) => players.find((p) => p.id === id) || null,
     nearestPlayer: (npc) => {
       let best = null, bestD = Infinity;
@@ -66,7 +66,8 @@ export function makeWorld(room, dt, io) {
       return best;
     },
     fallbackPoint: (npc) => {
-      const away = POSTS.filter((p) => p.room !== npc.room && !OUTDOOR_ZONES.includes(p.room));
+      const outdoor = outdoorZones();
+      const away = POSTS.filter((p) => p.room !== npc.room && !outdoor.includes(p.room));
       if (!away.length) return null;
       const threat = npc.lastSeen || npc;
       return away.sort((a, b) => dist2D(b, threat) - dist2D(a, threat))[Math.floor(Math.random() * 3) % away.length];

@@ -15,9 +15,21 @@ import { OBJECTIVES, PHASES } from './mission-story.js';
 
 const dist2D = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
-/** 구역 이름 -> 사람이 읽는 이름 ('LIBRARY' -> '서재'). */
-const ZONE_LABEL = new Map(AREAS.map((a) => [a.name, a.label]));
-const zoneLabel = (name) => (name ? ZONE_LABEL.get(name) || name : '위치 확인 필요');
+/* 구역 이름 -> 사람이 읽는 이름 ('LIBRARY' -> '서재').
+ *
+ * 맵마다 구역이 다르므로 표를 모듈 최상위에서 한 번 만들어 두면 안 된다 -
+ * 저택에서 만든 표를 사무실에서 쓰면 방 이름이 전부 영문 원문으로 나온다.
+ * 배열 자체를 열쇠로 캐시하므로 맵을 오가도 다시 만들지 않는다. */
+const zoneLabelCache = new WeakMap();
+function zoneLabel(name) {
+  if (!name) return '위치 확인 필요';
+  let table = zoneLabelCache.get(AREAS);
+  if (!table) {
+    table = new Map(AREAS.map((a) => [a.name, a.label]));
+    zoneLabelCache.set(AREAS, table);
+  }
+  return table.get(name) || name;
+}
 /**
  * "거래 장부 · 서재" 처럼 무엇이 어디에 남았는지 한 줄로.
  * 화면의 목표 패널은 좁다. 두 곳까지만 적고 나머지는 개수로 줄인다.

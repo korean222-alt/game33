@@ -15,7 +15,7 @@ import { objectiveReport, phaseComplete, missedObjectives } from '../public/js/o
 import { scoreMission, gradeAdvice } from '../public/js/scoring.js';
 import { TargetHistory } from '../public/js/shot-trace.js';
 import {
-  DIFFICULTY, SUSPECT_MAX_HP, PLAYER_EYE, DEFUSE_SECONDS, DEFUSE_RANGE, OUTDOOR_ZONES,
+  DIFFICULTY, SUSPECT_MAX_HP, PLAYER_EYE, DEFUSE_SECONDS, DEFUSE_RANGE, outdoorZones,
   REINFORCE_DELAY_MS, REINFORCE_COUNT, RECONNECT_GRACE_MS,
 } from './constants.js';
 import { now, clamp, dist2D, pick, jitter, emitNoise, npcPublic } from './util.js';
@@ -50,7 +50,7 @@ export function setupMission(room) {
       personality: entry.personality,
       hp: Math.round(SUSPECT_MAX_HP * diff.hpMul),
     });
-    suspect.origin = OUTDOOR_ZONES.includes(entry.post.room) ? 'outdoor' : 'indoor';
+    suspect.origin = outdoorZones().includes(entry.post.room) ? 'outdoor' : 'indoor';
     suspect.morale = clamp(1 * diff.moraleMul, 0.4, 1.2);
     // 시작 직후 전원이 동시에 두리번거리지 않도록 시선 변경 시점을 흩뜨린다.
     suspect.stateUntil = now() + 3500 + random() * 5000;
