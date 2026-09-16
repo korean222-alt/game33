@@ -10,10 +10,34 @@
  *    flags, stats, standingPlayers, phase, objectiveDone
  * ========================================================================== */
 
-import { EXTRACTION, AREAS } from './map-data.js';
+import { EXTRACTION, AREAS, zoneAt } from './map-data.js';
 import { OBJECTIVES, PHASES, objectiveLabel, phaseText } from './mission-story.js';
 
 const dist2D = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+
+/* ========================================================================== *
+ *  사람을 세는 목표가 판을 멎게 하지 않도록
+ *
+ *  방이 열여덟 칸인 사옥에서 실제로 일어난 일이다. 마지막 한 명이 어느 방으로
+ *  옮겨 갔는지 알 방법이 없어서, 나머지를 다 끝내 놓고도 4단계에서 22분을 다
+ *  썼다. 증거 하나도 마찬가지였다.
+ *
+ *  두 가지를 같이 넣는다.
+ *    1) 몇 명이 어느 구역에 남았는지 목표 줄에 적는다. 남은 수가 적을 때만
+ *       적는다 - 처음부터 전원의 방을 알려 주면 수색이라는 게 없어진다.
+ *    2) 그래도 못 찾으면 STALL_MS 뒤에 "산개" 로 보고 다음 단계로 넘긴다.
+ *       남은 인원이 사라지지는 않는다. 철수하는 길에 마주치면 여전히 쏜다.
+ *
+ *  시한은 "지금 단계를 붙잡고 있는 목표" 에만 적용한다. 아직 오지 않은 단계의
+ *  목표까지 시간으로 끝난 것으로 쳐 주면 점수(missedObjectives)가 거짓이 된다.
+ * ========================================================================== */
+export const STALL_MS = 100000;
+/** 남은 인원이 이 수 이하로 줄면 어느 구역에 있는지 적어 준다. */
+export const REVEAL_AT = 3;
+
+const stalling = (room, id) => Number.isFinite(room.phaseEnteredAt)
+  && !!PHASES[room.phase]?.require.includes(id)
+  && Date.now() - room.phaseEnteredAt > STALL_MS;
 
 /* 구역 이름 -> 사람이 읽는 이름 ('LIBRARY' -> '서재').
  *
@@ -43,22 +67,50 @@ function whereLeft(list) {
   return `${named.slice(0, WHERE_SHOWN).join(' / ')} 외 ${named.length - WHERE_SHOWN}곳`;
 }
 
+/**
+ * 아직 남은 사람들이 어느 구역에 있는가. 같은 구역은 한 번만 적는다.
+ *
+ * 자리에 적힌 방(npc.room)이 아니라 지금 서 있는 좌표로 묻는다 - 순찰로 방을
+ * 옮겨 다니므로, 배치 때의 방을 적으면 이미 떠난 방으로 보내게 된다.
+ */
+function wherePeople(list) {
+  const zones = [...new Set(list.map((n) => zoneLabel(zoneAt(n.x, n.z) || n.room)))];
+  if (zones.length <= WHERE_SHOWN) return zones.join(' / ');
+  return `${zones.slice(0, WHERE_SHOWN).join(' / ')} 외 ${zones.length - WHERE_SHOWN}곳`;
+}
+
 /** 더 이상 위협이 아닌 상태: 쓰러졌거나, 체포됐거나, 손을 들었다. */
 export const neutralised = (s) => !s.alive || s.arrested || s.state === 'surrender';
+
+/**
+ * 사람을 세는 목표 한 줄. 남은 수가 적으면 어디에 있는지까지 적는다.
+ *
+ * @param handled   무엇을 "처리됨" 으로 볼 것인가 (용의자는 무력화, 민간인은 확보)
+ * @param countable 셀 대상이 아예 없을 때도 끝난 것으로 볼 것인가
+ */
+function peopleState(room, id, list, handled = neutralised, countable = true) {
+  const left = list.filter((n) => !handled(n));
+  const stalled = countable && left.length > 0 && stalling(room, id);
+  return {
+    done: countable && (left.length === 0 || stalled),
+    have: list.length - left.length,
+    need: list.length,
+    stalled,
+    detail: left.length && left.length <= REVEAL_AT ? `남은 ${left.length}명 · ${wherePeople(left)}` : '',
+  };
+}
 
 export function objectiveState(room, id) {
   const suspects = room.suspects;
   switch (id) {
-    case 'perimeter': {
-      const outdoor = suspects.filter((s) => s.origin === 'outdoor');
-      return { done: outdoor.every(neutralised), have: outdoor.filter(neutralised).length, need: outdoor.length };
-    }
+    case 'perimeter':
+      return peopleState(room, id, suspects.filter((s) => s.origin === 'outdoor'));
     case 'breach':
       return { done: room.flags.breached, have: room.flags.breached ? 1 : 0, need: 1 };
     case 'civilians': {
+      // 구석에 숨어 버린 직원 한 명 때문에 2단계가 멎는 것도 같은 고장이다.
       const list = room.civilians.filter((c) => !c.hostage);
-      const handled = list.filter((c) => c.secured || !c.alive);
-      return { done: list.length > 0 && handled.length === list.length, have: handled.length, need: list.length };
+      return peopleState(room, id, list, (c) => c.secured || !c.alive, list.length > 0);
     }
     case 'devices': {
       const left = room.sites.filter((s) => !s.defused);
@@ -78,11 +130,8 @@ export function objectiveState(room, id) {
       const done = !!hostage && hostage.alive;
       return { done, have: done ? 1 : 0, need: 1, failed: !!hostage && !hostage.alive };
     }
-    case 'suspects': {
-      const list = suspects.filter((s) => !s.reinforcement);
-      const handled = list.filter(neutralised);
-      return { done: handled.length === list.length, have: handled.length, need: list.length };
-    }
+    case 'suspects':
+      return peopleState(room, id, suspects.filter((s) => !s.reinforcement));
     case 'extract': {
       const standing = room.standingPlayers;
       const inZone = standing.filter((p) => dist2D(p, EXTRACTION) <= EXTRACTION.radius);

@@ -11,7 +11,9 @@ import {
   createSuspect, createCivilian, planOccupancy, SUSPECT_EYE, SUSPECT_RADIUS,
 } from '../public/js/suspect-ai.js';
 import { PHASES, phaseText, missionLine } from '../public/js/mission-story.js';
-import { objectiveReport, phaseComplete, missedObjectives } from '../public/js/objectives.js';
+import {
+  objectiveState, objectiveReport, phaseComplete, missedObjectives,
+} from '../public/js/objectives.js';
 import { scoreMission, gradeAdvice } from '../public/js/scoring.js';
 import { TargetHistory } from '../public/js/shot-trace.js';
 import {
@@ -20,6 +22,7 @@ import {
 } from './constants.js';
 import { now, clamp, dist2D, pick, jitter, emitNoise, npcPublic } from './util.js';
 import { closeRoom } from './room.js';
+import { tripSprinklerAt } from './events.js';
 
 export function setupMission(room) {
   const random = Math.random;
@@ -159,6 +162,11 @@ export function updateObjectives(room, dt, io) {
       io.to(room.code).emit('siteDefused', { id: site.id, by: site.activeBy });
       io.to(room.code).emit('radio', { text: missionLine(site.id === 'A' ? 'siteA' : 'siteB') });
       emitNoise(room, site.x, site.z, NOISE.defuse, 'defuse', null);
+      /* 소각 장치를 끄면 그 방화구역의 스프링클러가 스스로 돈다. 물이 도는
+       * 동안은 나도 안 보이니 공짜는 아니다 - 그래서 "끄고 바로 빠진다" 가
+       * 이 장치의 값이 된다. (경보기 손잡이를 찾지 못한 판에서도 사옥의
+       * 절반짜리 장치가 한 번은 돌아간다.) */
+      tripSprinklerAt(room, site.x, site.z, io, '소각 장치 정지');
     }
     if (Math.abs(site.progress - before) > 0.001) {
       io.to(room.code).emit('siteProgress', { id: site.id, progress: site.progress, by: site.activeBy });
@@ -186,6 +194,17 @@ export function updateObjectives(room, dt, io) {
     }
   }
 
+  /* 마지막 한둘을 못 찾아 단계가 멎었다.
+   *
+   *  objectives.js 가 시한(STALL_MS)으로 판정하고, 여기서는 그 사실을 한 번만
+   *  말해 준다. 아무 설명 없이 목표에 체크가 들어가면 화면이 고장 난 것처럼
+   *  보인다 - 실제로 그게 이 장치의 유일한 위험이다. */
+  if (!room.flags.scattered
+      && PHASES[room.phase].require.some((id) => objectiveState(room, id).stalled)) {
+    room.flags.scattered = true;
+    io.to(room.code).emit('radio', { text: missionLine('scattered') });
+  }
+
   // 단계 진행
   if (phaseComplete(room)) {
     room.stats.phasesCleared = room.phase + 1;
@@ -196,6 +215,7 @@ export function updateObjectives(room, dt, io) {
     }
     room.phase++;
     room.phaseEnteredAt = now();
+    room.flags.scattered = false;     // 단계마다 다시 한 번은 말해 준다
     const next = phaseText(PHASES[room.phase]);
     io.to(room.code).emit('phase', objectiveReport(room));
     io.to(room.code).emit('radio', { text: next.radio });
@@ -255,7 +275,9 @@ export function spawnReinforcements(room, io) {
   for (let i = 0; i < REINFORCE_COUNT; i++) {
     const spot = gate[i % gate.length];
     const suspect = createSuspect(`rf_${i}`, {
-      post: { x: spot.x, z: spot.z, yaw: Math.PI, room: 'COURTYARD' },
+      // 구역 이름은 좌표에서 뽑는다. 저택의 'COURTYARD' 를 박아 두면 사무실에서는
+      // 있지도 않은 구역이 되고, 엄폐·순찰이 그 이름으로 아무것도 못 찾는다.
+      post: { x: spot.x, z: spot.z, yaw: Math.PI, room: zoneAt(spot.x, spot.z) },
       personality: 'aggressive',
       hp: Math.round(SUSPECT_MAX_HP * diff.hpMul),
     });

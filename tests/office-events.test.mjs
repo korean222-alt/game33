@@ -13,15 +13,31 @@ import {
   getMap, setActiveMap, resolveCircle, groundHeight, moveBody, ceilingAt,
 } from '../public/js/map-data.js';
 import { hasClearShot, forwardOf } from '../public/js/perception.js';
-import { createSuspect, updateSuspect, SUSPECT_EYE, ROLES } from '../public/js/suspect-ai.js';
+import {
+  createSuspect, updateSuspect, planOccupancy, SUSPECT_EYE, ROLES,
+} from '../public/js/suspect-ai.js';
 import { resetPower, powerCutDue } from '../public/js/power-state.js';
 import { objectiveState, objectiveReport } from '../public/js/objectives.js';
 import { Room } from '../server.js';
-import { pullAlarm, updateSprinklers, wetAt, SPRINKLER_DELAY_MS, SPRINKLER_MS } from '../server/events.js';
+import {
+  pullAlarm, tripSprinklerAt, updateSprinklers, wetAt, SPRINKLER_DELAY_MS, SPRINKLER_MS,
+} from '../server/events.js';
 import { emitNoise } from '../server/util.js';
+import { makeWorld } from '../server/world.js';
 
 const OFFICE = getMap('office');
 const MANSION = getMap('mansion');
+
+/** 씨앗을 주는 난수. 같은 씨앗이면 같은 판이 나와야 원인을 되짚을 수 있다. */
+function mulberry(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 /** 이벤트를 모아 두는 가짜 io. */
 function recorder() {
@@ -249,6 +265,130 @@ test('화재경보기를 당기면 그 구역 스프링클러가 돌고, 물이 
   updateSprinklers(room, io);
   assert.ok(events.some((e) => e.name === 'sprinklerStopped' && e.data.id === zone.id));
   assert.equal(wetAt(room, zone.area.x, zone.area.z), false);
+});
+
+/* 경보기 손잡이를 못 찾아도 물은 한 번은 돈다.
+ *
+ *  "스프링클러를 어떻게 쓰는지 모르겠다" 가 이 장치의 실제 증상이었다. 벽에
+ *  붙은 작은 손잡이를 아무도 못 찾으면 사옥의 절반짜리 장치가 한 판도 안 쓰인다.
+ *  그래서 회수와 해체에도 물려 두었다. */
+test('증거 회수와 장치 해체가 그 구역 소화 설비를 돌린다', () => {
+  const room = new Room('AUTO', 'office');
+  const { events, io } = recorder();
+  const ledger = OFFICE.EVIDENCE_SPOTS.find((e) => e.id === 'ledger');   // 자료보관실 · 북측
+  const north = OFFICE.SPRINKLERS.find((s) => s.id === 'north');
+
+  const zone = tripSprinklerAt(room, ledger.x, ledger.z, io, '이중 장부 회수');
+  assert.equal(zone?.id, north.id, '자료보관실은 북측 방화구역이다');
+  assert.ok(events.some((e) => e.name === 'radio' && /소화 설비/.test(e.data.text)),
+    '무슨 일이 난 건지 알려 주지 않으면 화면이 고장 난 것처럼 보인다');
+
+  // 물이 나오기까지는 경보기를 당겼을 때와 똑같이 뜸을 들인다.
+  assert.equal(wetAt(room, ledger.x, ledger.z), false);
+  room.sprinklerAt.set(north.id, Date.now() - 1);
+  updateSprinklers(room, io);
+  assert.equal(wetAt(room, ledger.x, ledger.z), true);
+
+  // 이미 도는 구역을 다시 켜지는 않는다 (증거 셋이 한 방에 몰려 있을 수 있다).
+  assert.equal(tripSprinklerAt(room, ledger.x, ledger.z, io, '두 번째'), null);
+
+  // 구역 밖(마당)에서는 아무 일도 안 난다. 저택에서도 마찬가지다.
+  assert.equal(tripSprinklerAt(room, 0, 45, io, '광장'), null);
+  assert.equal(tripSprinklerAt(new Room('DRY2', 'mansion'), 0, 0, io, '저택'), null);
+});
+
+/* 배치가 맵의 마당 이름을 실제로 읽는가.
+ *
+ *  planOccupancy 가 저택의 마당 이름 넷('COURTYARD' 따위)을 상수로 들고
+ *  있었다. 사무실에서는 하나도 안 맞아서 광장·주차장·하역장이 전부 "실내" 로
+ *  분류됐다 - 바깥 경비를 먼저 세우는 규칙도, 첫 경비를 방어형으로 두는 완화도
+ *  사옥에서는 아예 걸리지 않았다. */
+test('사무실에서도 바깥 경비가 먼저 서고, 한 방에 몰리지 않는다', () => {
+  setActiveMap('office');
+  try {
+    const outdoor = new Set(OFFICE.OUTDOOR_AREAS.map((a) => a.name));
+    let withGuard = 0;
+    for (let seed = 0; seed < 40; seed++) {
+      const random = mulberry(seed + 1);
+      const plan = planOccupancy(OFFICE.POSTS, 6, random);
+      assert.ok(plan.length > 0 && plan.length <= 6);
+      assert.equal(new Set(plan.map((p) => p.post)).size, plan.length, '같은 자리에 두 명이 겹친다');
+      if (plan.some((p) => outdoor.has(p.post.room))) withGuard++;
+      // 한 구역에 세 명 이상 몰리면 나머지 열일곱 칸이 텅 빈다.
+      const perRoom = new Map();
+      for (const p of plan) perRoom.set(p.post.room, (perRoom.get(p.post.room) || 0) + 1);
+      for (const [name, n] of perRoom) assert.ok(n <= 2, `${name} 에 ${n}명이 몰렸다`);
+    }
+    assert.ok(withGuard >= 30, `40판 중 ${withGuard}판에만 바깥 경비가 섰다`);
+  } finally {
+    setActiveMap('mansion');
+  }
+});
+
+/* 방을 안 옮겨 다니는 경비가 사옥에서는 "영원히 못 찾는 한 명" 이 된다.
+ *
+ *  저택은 방이 여섯 칸이라 한 방 안을 도는 것으로 충분했다. 열여덟 칸에서는
+ *  아니다 - 마지막 한 명이 어느 구석에 서 있으면 방을 처음부터 다시 다 열어야
+ *  한다. 대신 경계 하나는 지켜야 한다: 마당 사람이 건물로 들어가 버리면
+ *  1단계(외곽 무장 인원 정리)를 건물 안에서 끝내야 하는 일이 생긴다. */
+test('순찰은 옆방까지 나가되, 마당과 건물 사이를 넘지 않는다', () => {
+  const room = new Room('ROAM', 'office');
+  const { io } = recorder();
+  const world = makeWorld(room, 0.05, io);
+  const outdoor = new Set(OFFICE.OUTDOOR_AREAS.map((a) => a.name));
+
+  const sample = (from, npc, times = 400) => {
+    const seen = new Set();
+    for (let i = 0; i < times; i++) {
+      const spot = world.roamPoint(from, npc);
+      if (spot) seen.add(spot.room);
+    }
+    return seen;
+  };
+
+  const inside = sample('DEV WEST', { x: -22, z: -6.75, room: 'DEV WEST' });
+  assert.ok(inside.size > 1, `개발실 서편에서 한 방 안만 돈다: ${[...inside]}`);
+  for (const name of inside) {
+    assert.equal(outdoor.has(name), false, `건물 안 경비가 마당(${name})으로 나간다`);
+  }
+
+  const yard = sample('NORTH YARD', { x: 0, z: -41, room: 'NORTH YARD' });
+  for (const name of yard) {
+    assert.equal(outdoor.has(name), true, `마당 경비가 건물 안(${name})으로 들어간다`);
+  }
+
+  // 자리에 묶인 초소 저격수는 애초에 순찰을 걸지 않는다.
+  assert.equal(createSuspect('x', { post: OFFICE.GARRISON[0].post, role: 'marksman' }).anchored, true);
+});
+
+test('순찰을 마치면 그 자리를 새 담당 자리로 삼는다', () => {
+  const from = OFFICE.POSTS.find((p) => p.room === 'DESIGN');
+  const to = OFFICE.POSTS.find((p) => p.room === 'DESIGN' && p !== from);
+  setActiveMap('office');
+  try {
+    const npc = createSuspect('walker', { post: from, personality: 'aggressive' });
+    npc.state = 'patrol';
+    npc.roam = to;
+    npc.stateUntil = 1e15;
+    const world = {
+      now: 1000, dt: 0.05, colliders: [], players: [], random: () => 0.5,
+      skillScale: 1, alliesDown: 0, alliesNear: 0, brightness: () => 1,
+      playerById: () => null, route: () => [], doorNear: () => false,
+      roamPoint: () => null, hideSpot: () => null, fallbackPoint: () => null,
+      doors: { blockingBetween: () => null, colliders: () => [] },
+      noise: () => {}, fire: () => {},
+    };
+    for (let i = 0; i < 2000 && npc.state === 'patrol'; i++) {
+      world.now += 50;
+      updateSuspect(npc, world);
+    }
+    assert.equal(npc.state, 'guard');
+    assert.ok(Math.hypot(npc.post.x - to.x, npc.post.z - to.z) < 0.8,
+      '도착한 자리를 담당 자리로 삼지 않으면 guard 가 곧바로 원래 자리로 되돌려 보낸다');
+    assert.equal(npc.room, 'DESIGN');
+  } finally {
+    setActiveMap('mansion');
+  }
 });
 
 test('스프링클러 구역이 건물 안을 빠짐없이 덮는다', () => {

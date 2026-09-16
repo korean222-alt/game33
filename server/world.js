@@ -6,6 +6,7 @@
  *  서버 없이도 테스트할 수 있다.
  * ========================================================================== */
 import { LIGHTS, POSTS, COVER_POINTS, findRoute } from '../public/js/map-data.js';
+import { PHASES } from '../public/js/mission-story.js';
 import { DOOR, isBlocking } from '../public/js/doors.js';
 import { NOISE, brightnessAt } from '../public/js/perception.js';
 import { SUSPECT_EYE } from '../public/js/suspect-ai.js';
@@ -16,6 +17,9 @@ import { now, dist2D, at3, emitNoise } from './util.js';
 import { damagePlayer } from './combat.js';
 import { setDoorState } from './door-actions.js';
 import { wetAt, WET_BRIGHTNESS } from './events.js';
+
+/** 순찰로 한 번에 건너갈 수 있는 거리. 이보다 멀면 방을 옮기지 않는다. */
+const ROAM_RANGE = 26;
 
 export function makeWorld(room, dt, io) {
   const colliders = room.doors.colliders();
@@ -29,9 +33,22 @@ export function makeWorld(room, dt, io) {
   }));
   const downCount = room.suspects.filter((s) => !s.alive || s.arrested || s.state === 'surrender').length;
 
+  /* 잔여 인원 단계인가.
+   *
+   *  4단계(확보)와 5단계(철수)에서는 남은 몇 명이 더 자주, 더 멀리 돈다.
+   *  구석에 박혀 있는 마지막 한 명 때문에 방 열여덟 칸을 다시 여는 것이
+   *  사옥에서 실제로 판을 멎게 한 원인이었다. */
+  const phaseId = PHASES[room.phase]?.id;
+  const hunting = phaseId === 'clear' || phaseId === 'extract';
+  const outdoor = outdoorZones();
+  /* 마당 사람은 마당에서, 건물 사람은 건물에서 돈다. 이 경계를 넘게 두면
+   * 1단계(외곽 무장 인원 정리)가 건물 안에서 끝나야 하는 일이 생긴다. */
+  const sameSide = (a, b) => outdoor.includes(a) === outdoor.includes(b);
+
   return {
     now: t, dt, colliders, doors: room.doors, players,
     skillScale: diff.skill,
+    patrolScale: hunting ? 2.4 : 1,
     alliesDown: downCount,
     alliesNear: 0,
     random: Math.random,
@@ -55,10 +72,21 @@ export function makeWorld(room, dt, io) {
     /** 소리가 내 방 문 근처에서 났는가 (매복 판단). */
     doorNear: (point, roomName) => room.doors.doors.some((door) =>
       door.link.includes(roomName) && Math.hypot(door.x - point.x, door.z - point.z) < 3.2),
+    /**
+     * 순찰해서 갈 자리.
+     *
+     *  예전에는 자기 방 안의 다른 자리만 골랐다. 방이 여섯 칸인 저택에서는
+     *  그걸로 충분했지만, 열여덟 칸짜리 사옥에서는 "저 사람은 저 방에서 평생
+     *  안 나온다" 가 된다. 이제 옆방까지 나간다 - 문을 열고 지나가므로 소리도
+     *  난다. 그 소리가 "어디에 누가 남았는지" 를 알려 주는 단서가 된다.
+     */
     roamPoint: (roomName, npc) => {
-      const candidates = POSTS.filter((p) => p.room === roomName && dist2D(p, npc) > 1.5);
-      if (!candidates.length) return null;
-      return candidates[Math.floor(Math.random() * candidates.length)];
+      const here = POSTS.filter((p) => p.room === roomName && dist2D(p, npc) > 1.5);
+      const away = POSTS.filter((p) => p.room !== roomName
+        && sameSide(p.room, roomName) && dist2D(p, npc) < ROAM_RANGE);
+      const pool = away.length && Math.random() < (hunting ? 0.65 : 0.3) ? away : here;
+      if (!pool.length) return null;
+      return pool[Math.floor(Math.random() * pool.length)];
     },
     hideSpot: (npc) => {
       const inRoom = COVER_POINTS.filter((c) => c.room === npc.room);
