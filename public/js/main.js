@@ -356,6 +356,15 @@ function applyLobby(l) {
 function renderMapPicker(l) {
   const seg = $('mapSeg');
   const maps = l.maps || [];
+  /* 맵 목록을 안 보내는 서버(예전 버전이 아직 떠 있는 동안)에서는 선택 자체를
+   * 감춘다. 빈 칸만 덩그러니 남으면 고장으로 보인다. 프로토콜을 올리지 않은
+   * 이유도 같다 - 새 필드가 전부 덤이라, 한쪽만 먼저 올라가도 저택은 그대로
+   * 돌아간다. */
+  const show = maps.length > 1;
+  seg.classList.toggle('hidden', !show);
+  $('mapNote').classList.toggle('hidden', !show);
+  seg.previousElementSibling?.classList.toggle('hidden', !show);   // "작전 구역" 라벨
+  if (!show) return;
   if (seg.dataset.ids !== maps.map((m) => m.id).join(',')) {
     seg.dataset.ids = maps.map((m) => m.id).join(',');
     seg.innerHTML = '';
