@@ -3,14 +3,14 @@
  * ========================================================================== */
 import {
   BACKUP_GENERATOR, COLLIDERS, SPAWNS, BOMB_SITES, POSTS, CIVILIAN_SPOTS, EVIDENCE_SPOTS,
-  HVT_ROOMS, isIndoors, zoneAt,
+  HVT_ROOMS, isIndoors, zoneAt, CURRENT_MAP,
 } from '../public/js/map-data.js';
 import { DoorSet, rollDoorStates, ensureQuietEntry } from '../public/js/doors.js';
 import { NOISE, hasClearShot, inFieldOfView } from '../public/js/perception.js';
 import {
   createSuspect, createCivilian, planOccupancy, SUSPECT_EYE, SUSPECT_RADIUS,
 } from '../public/js/suspect-ai.js';
-import { PHASES, MISSION } from '../public/js/mission-story.js';
+import { PHASES, phaseText, missionLine } from '../public/js/mission-story.js';
 import { objectiveReport, phaseComplete, missedObjectives } from '../public/js/objectives.js';
 import { scoreMission, gradeAdvice } from '../public/js/scoring.js';
 import { TargetHistory } from '../public/js/shot-trace.js';
@@ -56,6 +56,24 @@ export function setupMission(room) {
     suspect.stateUntil = now() + 3500 + random() * 5000;
     room.npcs.push(suspect);
   });
+
+  /* --- 늘 있는 자리 (초소) ---
+   *
+   *  botCount 와 무관하게 세운다. 인원을 3명으로 줄여 놓고 시작해도 초소는
+   *  비어 있지 않다 - 저 둘이 이 맵의 "밖" 을 정의하기 때문이다. 자리도 흔들지
+   *  않는다. 발판은 4m 사방이라 1.3m 를 흔들면 난간 속에 들어간다. */
+  for (const entry of CURRENT_MAP.GARRISON || []) {
+    const guard = createSuspect(entry.id, {
+      post: { ...entry.post },
+      personality: entry.personality || 'ambusher',
+      role: entry.role || null,
+      hp: Math.round((entry.hp ?? SUSPECT_MAX_HP) * diff.hpMul),
+    });
+    guard.origin = outdoorZones().includes(entry.post.room) ? 'outdoor' : 'indoor';
+    guard.morale = clamp(1 * diff.moraleMul, 0.4, 1.2);
+    guard.stateUntil = now() + 3500 + random() * 5000;
+    room.npcs.push(guard);
+  }
 
   // --- 주요 용의자와 인질 ---
   // 방도, 그 방 안의 자리도 매 판 다시 뽑는다. 인질이 어디에 있는지는
@@ -139,7 +157,7 @@ export function updateObjectives(room, dt, io) {
       site.defused = true;
       room.stats.devicesDefused++;
       io.to(room.code).emit('siteDefused', { id: site.id, by: site.activeBy });
-      io.to(room.code).emit('radio', { text: site.id === 'A' ? MISSION.siteA : MISSION.siteB });
+      io.to(room.code).emit('radio', { text: missionLine(site.id === 'A' ? 'siteA' : 'siteB') });
       emitNoise(room, site.x, site.z, NOISE.defuse, 'defuse', null);
     }
     if (Math.abs(site.progress - before) > 0.001) {
@@ -154,7 +172,7 @@ export function updateObjectives(room, dt, io) {
     if (room.standingPlayers.some((p) =>
       dist2D(p, hvt) < 14 && hasClearShot({ x: p.x, y: p.y + PLAYER_EYE, z: p.z }, hvt, 1.3, colliders))) {
       room.flags.hvtSeen = true;
-      io.to(room.code).emit('radio', { text: MISSION.hvtFound });
+      io.to(room.code).emit('radio', { text: missionLine('hvtFound') });
     }
   }
   // 주요 용의자가 제압되면 인질이 풀려난다 (사살·체포·항복 모두)
@@ -164,7 +182,7 @@ export function updateObjectives(room, dt, io) {
       hostage.hostage = false;
       hostage.state = 'comply';
       hostage.hands = 1;
-      io.to(room.code).emit('radio', { text: MISSION.hvtDown });
+      io.to(room.code).emit('radio', { text: missionLine('hvtDown') });
     }
   }
 
@@ -178,7 +196,7 @@ export function updateObjectives(room, dt, io) {
     }
     room.phase++;
     room.phaseEnteredAt = now();
-    const next = PHASES[room.phase];
+    const next = phaseText(PHASES[room.phase]);
     io.to(room.code).emit('phase', objectiveReport(room));
     io.to(room.code).emit('radio', { text: next.radio });
     // Power follows entry time, never phase transitions (including after restoration).
@@ -222,7 +240,7 @@ export function cutPower(room, io) {
   if (!room.power) return;
   room.power = false;
   io.to(room.code).emit('power', { on: false });
-  io.to(room.code).emit('radio', { text: MISSION.powerCut });
+  io.to(room.code).emit('radio', { text: missionLine('powerCut') });
   // 불이 꺼지는 순간 모두가 움찔한다. 소리가 아니라 상태 변화로 전한다.
   for (const npc of room.npcs) {
     if (!npc.alive || npc.kind === 'civilian') continue;
@@ -250,7 +268,7 @@ export function spawnReinforcements(room, io) {
     created.push(suspect);
   }
   io.to(room.code).emit('npcsJoined', { npcs: created.map(npcPublic) });
-  io.to(room.code).emit('radio', { text: MISSION.reinforcements });
+  io.to(room.code).emit('radio', { text: missionLine('reinforcements') });
 }
 
 export function checkMissionEnd(room, io) {

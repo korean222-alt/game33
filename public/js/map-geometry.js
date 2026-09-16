@@ -29,6 +29,20 @@ export function useGeometry(map) {
 
 const defaults = () => active.colliders;
 
+/**
+ * (x,z) 위의 천장 높이.
+ *
+ *  실내에는 천장이 있다. 밖에는 없다 - 그런데 예전에는 맵 높이를 그대로
+ *  천장으로 써서, 층고 3.6m 짜리 사옥에서는 야외의 머리 위 3.6m 에도 보이지
+ *  않는 뚜껑이 덮여 있었다. 초소 발판(3.2m)에 올라선 사람이 그 뚜껑에 눌려
+ *  아래로 처박히는 것이 그 증상이다. 야외는 넉넉히 열어 두되, 무한대로 두지는
+ *  않는다 - 위치를 꾸며 보내는 클라이언트가 하늘로 날아가는 것도 막아야 한다.
+ */
+export const OUTDOOR_HEADROOM = 6;
+export function ceilingAt(x, z, bounds = active) {
+  return bounds.isIndoors(x, z) ? bounds.height : bounds.height + OUTDOOR_HEADROOM;
+}
+
 /** 맵 경계 밖인가 (담장/부지 끝). */
 export function outOfBounds(x, z, bounds = active) {
   return Math.abs(x) > bounds.halfW - .2 || Math.abs(z) > bounds.halfD - .2;
@@ -152,7 +166,7 @@ export function moveBody(pos, velocity, dt, opts = {}, colliders = defaults()) {
     // 올라가는 머리를 옆 판정 전에 잡아 준다. 그러지 않으면 선반 아래에서
     // 몸이 옆으로 튕겨 나간다.
     if (v.y > 0) {
-      let headLimit = active.height;
+      let headLimit = ceilingAt(nx, nz);
       for (const c of near) if ((c.y || 0) >= oldY + height - .002 && overlaps(nx, nz, radius, c)) headLimit = Math.min(headLimit, c.y);
       if (ny + height > headLimit) { ny = headLimit - height; v.y = 0; }
     }
@@ -167,7 +181,7 @@ export function moveBody(pos, velocity, dt, opts = {}, colliders = defaults()) {
       }
       if (ny <= support + .002) { ny = support; v.y = 0; onGround = true; }
     } else {
-      let headLimit = active.height;
+      let headLimit = ceilingAt(p.x, p.z);
       for (const c of nearbyColliders(p.x, p.z, radius + 1.2, colliders)) {
         if ((c.y || 0) >= oldY + height - .002 && overlaps(p.x, p.z, radius, c)) headLimit = Math.min(headLimit, c.y);
       }

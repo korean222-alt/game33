@@ -4,7 +4,7 @@
  *  게임 로직에서 DOM 을 직접 만지지 않도록 여기로 모아둔다.
  * ========================================================================== */
 
-import { MISSION } from './mission-story.js';
+import { missionLine } from './mission-story.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -401,7 +401,7 @@ export class Hud {
     $('resGradeLabel').textContent = data.gradeLabel || '';
     $('resScore').textContent = `${data.score ?? 0} 점`;
     $('resAdvice').textContent = data.advice || '';
-    $('resStory').textContent = won ? MISSION.won : MISSION.lost;
+    $('resStory').textContent = missionLine(won ? 'won' : 'lost');
 
     const breakdown = $('resLines');
     breakdown.innerHTML = '';

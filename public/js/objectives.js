@@ -11,7 +11,7 @@
  * ========================================================================== */
 
 import { EXTRACTION, AREAS } from './map-data.js';
-import { OBJECTIVES, PHASES } from './mission-story.js';
+import { OBJECTIVES, PHASES, objectiveLabel, phaseText } from './mission-story.js';
 
 const dist2D = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 
@@ -111,7 +111,7 @@ export function objectiveState(room, id) {
 }
 
 export function objectiveReport(room) {
-  const phase = PHASES[room.phase];
+  const phase = phaseText(PHASES[room.phase]);
   return {
     phase: room.phase,
     id: phase.id,
@@ -122,7 +122,7 @@ export function objectiveReport(room) {
       const state = objectiveState(room, id);
       const done = state.done || room.objectiveDone.has(id);
       return {
-        id, label: OBJECTIVES[id]?.label || id, kind: OBJECTIVES[id]?.kind || 'primary',
+        id, label: objectiveLabel(id), kind: OBJECTIVES[id]?.kind || 'primary',
         done, have: state.have, need: state.need, failed: !!state.failed,
         detail: done ? '' : (state.detail || ''),
       };

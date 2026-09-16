@@ -8,7 +8,7 @@ import { BACKUP_GENERATOR } from '../public/js/map-data.js';
 import { restorePower } from '../public/js/power-state.js';
 import { NOISE, hasClearShot, inFieldOfView } from '../public/js/perception.js';
 import { warnSuspect, WARNING } from '../public/js/suspect-ai.js';
-import { MISSION } from '../public/js/mission-story.js';
+import { missionLine } from '../public/js/mission-story.js';
 import {
   INTERACT_RANGE, PLAYER_EYE, SECURE_SECONDS, ARREST_SECONDS, REVIVE_SECONDS,
   EVIDENCE_SECONDS, SHOUT_COOLDOWN,
@@ -26,7 +26,7 @@ export function interactionTarget(room, player) {
     best = { kind, id, seconds, label }; bestD = d;
   };
 
-  if (!room.power && room.powerCutDone && !room.generatorStarted) {
+  if (BACKUP_GENERATOR && !room.power && room.powerCutDone && !room.generatorStarted) {
     consider('generator', BACKUP_GENERATOR.id,
       { x: BACKUP_GENERATOR.x, z: BACKUP_GENERATOR.z + BACKUP_GENERATOR.d / 2 + 0.05 },
       BACKUP_GENERATOR.seconds, '예비 발전기 · 차단기 올리기');
@@ -78,9 +78,9 @@ export function updateInteractions(room, dt, io) {
 
 export function completeInteraction(room, player, target, io) {
   if (target.kind === 'generator') {
-    if (target.id !== BACKUP_GENERATOR.id || !restorePower(room)) return;
+    if (target.id !== BACKUP_GENERATOR?.id || !restorePower(room)) return;
     io.to(room.code).emit('power', { on: true, generatorStarted: true });
-    io.to(room.code).emit('radio', { text: MISSION.powerRestored });
+    io.to(room.code).emit('radio', { text: missionLine('powerRestored') });
   } else if (target.kind === 'arrest') {
     const npc = room.npcs.find((n) => n.id === target.id);
     if (!npc || npc.arrested) return;
@@ -100,7 +100,7 @@ export function completeInteraction(room, player, target, io) {
     io.to(room.code).emit('civilianSecured', {
       id: npc.id, by: player.id, hostage: npc.id === 'hostage', ...at3(npc),
     });
-    io.to(room.code).emit('radio', { text: MISSION.civilianRescued });
+    io.to(room.code).emit('radio', { text: missionLine('civilianRescued') });
   } else if (target.kind === 'evidence') {
     const item = room.evidence.find((e) => e.id === target.id);
     if (!item || item.taken) return;

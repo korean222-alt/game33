@@ -20,11 +20,11 @@ import { fileURLToPath } from 'url';
 import { Server } from 'socket.io';
 
 import { GAME_PROTOCOL } from './public/js/protocol.js';
-import { MAP, COLLIDERS, SPAWNS, EXTRACTION, ROOMS, resolveCircle } from './public/js/map-data.js';
+import { MAP, COLLIDERS, SPAWNS, EXTRACTION, ROOMS, resolveCircle, ceilingAt } from './public/js/map-data.js';
 import { DOOR_ACTIONS, DOOR_REACH, doorDistance } from './public/js/doors.js';
 import { NOISE } from './public/js/perception.js';
 import { GRENADES, GRENADE_ORDER, startingGrenades } from './public/js/grenades.js';
-import { PHASES, MISSION } from './public/js/mission-story.js';
+import { PHASES, missionLine } from './public/js/mission-story.js';
 import { objectiveReport } from './public/js/objectives.js';
 
 import {
@@ -52,7 +52,9 @@ function applyPlayerInput(room, me, d) {
   if (d.seq !== undefined && (!Number.isSafeInteger(d.seq) || d.seq <= me.inputSeq)) return;
   // 위치는 클라 예측을 신뢰하되 서버에서 한 번 더 충돌 보정 (벽/문 뚫기 방지)
   const height = d.crouch ? 1.3 : 1.8;
-  me.y = clamp(d.y, 0, MAP.height - height);
+  /* 천장은 실내에만 있다. 맵 높이로 잘라 버리면 야외 초소 발판(3.2m) 위에
+   * 선 대원이 서버에서 1.8m 로 끌어내려져 초소 밖으로 밀려난다. */
+  me.y = clamp(d.y, 0, Math.max(0, ceilingAt(d.x, d.z) - height));
   const fixed = resolveCircle(d.x, d.z, PLAYER_RADIUS, room.doors.colliders(), me.y, height);
   me.x = fixed.x;
   me.z = fixed.z;
@@ -160,7 +162,7 @@ function startMatch(room, io) {
   }
 
   io.to(room.code).emit('matchStart', matchStatePayload(room));
-  io.to(room.code).emit('radio', { text: MISSION.entry });
+  io.to(room.code).emit('radio', { text: missionLine('entry') });
 
   if (room.timer) clearInterval(room.timer);
   room.lastTick = now();

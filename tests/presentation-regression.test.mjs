@@ -48,10 +48,14 @@ test('wrist constraints follow animated hands after avatar rotation, translation
 
 test('door frame uprights and header meet without overlapping front faces', () => {
   const world=new World(null,null);world._buildDoors();
-  for(const {group,pivot} of world.doorMeshes.values()) {
+  for(const {group,leaves} of world.doorMeshes.values()) {
     const [left,right,head]=group.children[0].children;
     assert.equal(left.position.y+left.geometry.parameters.height/2, head.position.y-head.geometry.parameters.height/2);
     assert.equal(right.position.y+right.geometry.parameters.height/2, head.position.y-head.geometry.parameters.height/2);
-    assert.ok(pivot.children[0].geometry.parameters.width < head.geometry.parameters.width-.18);
+    // 문짝을 다 합쳐도 문틀 안쪽에 들어가야 한다 (두 짝짜리 문 포함).
+    const total=leaves.reduce((sum,pivot)=>sum+pivot.children[0].geometry.parameters.width,0);
+    assert.ok(total < head.geometry.parameters.width-.18,
+      `문짝 합계 ${total} 가 문틀 ${head.geometry.parameters.width} 보다 넓다`);
+    for(const pivot of leaves) assert.equal(pivot.rotation.y,0,'문은 닫힌 채로 지어진다');
   }
 });

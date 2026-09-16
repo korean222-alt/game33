@@ -48,20 +48,44 @@ const dist2 = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 /* ========================================================================== *
  *  생성
  * ========================================================================== */
-export function createSuspect(id, { post, personality, hp = 100, kind = 'suspect', hostage = null }) {
+/**
+ * 특수 역할.
+ *
+ *  초소의 저격수를 넣으면서 생겼다. 성향(PERSONALITIES)이 "어떻게 싸우는가" 라면
+ *  역할은 "무엇으로 싸우는가" 다 - 사거리, 연사, 한 발의 무게, 그리고 자리를
+ *  뜨는가.
+ *
+ *  anchored 인 자는 걷지 않는다. 초소 계단은 사람이 올라갈 수 있는 높이로
+ *  놓여 있지만 길찾기 격자에서는 벽이다. 걷게 두면 내려올 길을 못 찾고
+ *  발판 위에서 난간에 부딪히며 떨린다.
+ */
+export const ROLES = {
+  marksman: { view: 46, burstSize: 1, fireGap: 2400, damage: 34, skill: 0.74, anchored: true },
+};
+
+export function createSuspect(id, { post, personality, hp = 100, kind = 'suspect', hostage = null, role = null }) {
+  const spec = ROLES[role] || null;
+  const traits = PERSONALITIES[personality] || PERSONALITIES.defensive;
   return {
-    id, kind,
-    x: post.x, z: post.z, y: 0, yaw: post.yaw ?? 0,
+    id, kind, role,
+    x: post.x, z: post.z, y: post.y || 0, yaw: post.yaw ?? 0,
     hp, maxHp: hp, alive: true,
-    personality, traits: PERSONALITIES[personality] || PERSONALITIES.defensive,
+    personality,
+    traits: spec?.skill ? { ...traits, skill: spec.skill } : traits,
+    // 역할이 정하는 것들. 없으면 이 파일 위쪽의 기본값을 쓴다.
+    view: spec?.view ?? VIEW,
+    burstSize: spec?.burstSize ?? BURST,
+    fireGap: spec?.fireGap ?? FIRE_GAP,
+    damage: spec?.damage ?? null,
+    anchored: !!spec?.anchored,
     room: post.room || zoneAt(post.x, post.z),
-    post: { x: post.x, z: post.z, yaw: post.yaw ?? 0 },
+    post: { x: post.x, y: post.y || 0, z: post.z, yaw: post.yaw ?? 0 },
     state: 'guard', stateSince: 0, stateUntil: 0,
     morale: 1, suppression: 0, blindUntil: 0, gas: 0,
     targetId: null, lastSeen: null, lastHeard: null,
     route: null, routeGoal: null, routeUntil: 0,
     cover: null, crouch: 0, moving: 0,
-    ammo: MAG, reloadUntil: 0, nextFire: 0, burst: BURST, spotTime: 0,
+    ammo: MAG, reloadUntil: 0, nextFire: 0, burst: spec?.burstSize ?? BURST, spotTime: 0,
     hostage, weaponDropped: false, arrested: false, hands: 0,
     doorUntil: 0, shoutedAt: 0,
     // 구두 경고로 쌓이는 압박. 시간이 지나면 풀린다.
@@ -111,6 +135,8 @@ function faceToward(npc, tx, tz, dt) {
 
 /** 경로를 따라 목표로 한 걸음. 도착하면 true. */
 function stepToward(npc, goal, speed, w) {
+  // 자리에 묶인 자(초소의 저격수)는 그쪽을 보기만 한다.
+  if (npc.anchored) { npc.moving = 0; faceToward(npc, goal.x, goal.z, w.dt); return false; }
   const key = `${Math.round(goal.x * 2)}:${Math.round(goal.z * 2)}`;
   if (npc.routeGoal !== key || !npc.route || w.now > npc.routeUntil) {
     npc.route = w.route(npc, goal);
@@ -171,7 +197,7 @@ export function spotTarget(npc, w) {
   for (const p of w.players) {
     if (!p.alive) continue;
     const d = dist2(npc, p);
-    if (d > VIEW) continue;
+    if (d > (npc.view || VIEW)) continue;
     if (!inFieldOfView(npc, p, FOV)) continue;
     if (!hasClearShot(eye, p, p.crouch ? 0.95 : 1.3, w.colliders)) continue;
     const factor = visibilityFactor(p, d, w.brightness(p.x, p.z));
@@ -278,7 +304,7 @@ export function warnSuspect(npc, w, { aimed = false, distance = 6, alliesDown = 
     }
     if (npc.state !== 'engage') setState(npc, 'engage', w);
     npc.spotTime = w.now;
-    npc.burst = BURST;
+    npc.burst = npc.burstSize || BURST;
     w.onDefy?.(npc);
     return 'defy';
   }
@@ -345,7 +371,7 @@ export function updateSuspect(npc, w) {
     if (npc.state !== 'engage' && npc.state !== 'surrender') {
       // 총을 내리고 있었다면 들어 올리는 시간이 더 걸린다.
       npc.spotTime = w.now + (unaware ? UNAWARE_DELAY : 0);
-      npc.burst = BURST;
+      npc.burst = npc.burstSize || BURST;
       setState(npc, 'engage', w);
       if (w.now - npc.shoutedAt > 6000) {
         npc.shoutedAt = w.now;
@@ -400,7 +426,7 @@ function guard(npc, w) {
   // 가끔 두리번거린다. 순찰 성향이면 방 안의 다른 자리로 옮긴다.
   if (w.now < npc.stateUntil) { faceToward(npc, npc.x + Math.sin(npc.yaw + 1), npc.z, w.dt); return; }
   npc.stateUntil = w.now + 2600 + w.random() * 4200;
-  if (w.random() < npc.traits.patrol) {
+  if (!npc.anchored && w.random() < npc.traits.patrol) {
     const spot = w.roamPoint(npc.room, npc);
     if (spot) { setState(npc, 'patrol', w, 14000); npc.roam = spot; return; }
   }
@@ -456,7 +482,11 @@ function engage(npc, w, visible) {
 
   // 사기가 남아 있고 공격 성향이면 거리를 좁히고, 아니면 엄폐물로 붙는다.
   const wantsCover = npc.traits.hold > 0.4 || npc.morale < 0.75 || npc.suppression > 0.3;
-  if (wantsCover) {
+  if (npc.anchored) {
+    // 초소 위. 엄폐물을 찾아 내려가지 않는다 - 난간 뒤로 몸을 낮출 뿐이다.
+    npc.moving = 0;
+    npc.crouch = npc.suppression > 0.5 ? 1 : 0;
+  } else if (wantsCover) {
     if (!npc.cover || w.now - (npc.coverAt || 0) > 5200) {
       npc.cover = pickCover(npc, target, w);
       npc.coverAt = w.now;
@@ -479,10 +509,13 @@ function engage(npc, w, visible) {
   if (w.now - npc.spotTime < 340 * npc.traits.react) return;
   if (w.now < npc.nextFire) return;
 
-  // 점사: BURST 발을 짧게 끊어 쏘고 한 박자 쉰다. 쉬는 동안이 반격할 틈이다.
-  const shotInBurst = BURST - npc.burst;
+  /* 점사: 정해진 발수를 짧게 끊어 쏘고 한 박자 쉰다. 쉬는 동안이 반격할 틈이다.
+   * 저격수는 한 발 쏘고 2.4초를 쉰다 - 그 2.4초가 엄폐물까지 뛰는 시간이다. */
+  const burstSize = npc.burstSize || BURST;
+  const gap = npc.fireGap || FIRE_GAP;
+  const shotInBurst = burstSize - npc.burst;
   if (npc.burst > 0) { npc.burst--; npc.nextFire = w.now + BURST_GAP; }
-  else { npc.burst = BURST; npc.nextFire = w.now + FIRE_GAP * (0.8 + w.random() * 0.6); }
+  else { npc.burst = burstSize; npc.nextFire = w.now + gap * (0.8 + w.random() * 0.6); }
   npc.ammo--;
 
   const chance = hitChance({

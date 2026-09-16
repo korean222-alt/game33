@@ -25,7 +25,7 @@ import { OFFICE } from './maps/office.js';
 import { useGeometry } from './map-geometry.js';
 
 export {
-  nearbyColliders, overlaps, resolveCircle, moveBody, groundHeight,
+  nearbyColliders, overlaps, resolveCircle, moveBody, groundHeight, ceilingAt,
   segmentHitsBox, hasLineOfSight, rayWallDistance, rayObstacleDistance,
   obstaclesBetween, outOfBounds,
 } from './map-geometry.js';
@@ -47,7 +47,10 @@ export const mapChoices = () => MAPS.map((m) => ({ id: m.id, label: m.label, blu
 export let CURRENT_MAP = MANSION;
 
 export let MAP = MANSION.MAP;
+/** 예비 발전기. 정전이 없는 맵에는 아예 없다 (null). */
 export let BACKUP_GENERATOR = MANSION.BACKUP_GENERATOR;
+/** 이 맵에서 정전이 일어나는가. */
+export let BLACKOUT = MANSION.BLACKOUT !== false;
 export let WALLS = MANSION.WALLS;
 export let DOORWAYS = MANSION.DOORWAYS;
 export let ARCHES = MANSION.ARCHES;
@@ -70,6 +73,8 @@ export let BOT_SPAWNS = MANSION.BOT_SPAWNS;
 export let PATROL_NODES = MANSION.PATROL_NODES;
 /** 이 맵만의 볼거리와 사건. 없는 맵도 있다. */
 export let EVENTS = MANSION.EVENTS || [];
+/** 스프링클러 구역. 저택에는 없다. */
+export let SPRINKLERS = MANSION.SPRINKLERS || [];
 
 /**
  * 맵을 갈아 끼운다. 같은 맵이면 아무것도 하지 않는다(길찾기 격자를 지키려고).
@@ -81,6 +86,7 @@ export function setActiveMap(id) {
   CURRENT_MAP = next;
   MAP = next.MAP;
   BACKUP_GENERATOR = next.BACKUP_GENERATOR;
+  BLACKOUT = next.BLACKOUT !== false;
   WALLS = next.WALLS;
   DOORWAYS = next.DOORWAYS;
   ARCHES = next.ARCHES;
@@ -102,6 +108,7 @@ export function setActiveMap(id) {
   BOT_SPAWNS = next.BOT_SPAWNS;
   PATROL_NODES = next.PATROL_NODES;
   EVENTS = next.EVENTS || [];
+  SPRINKLERS = next.SPRINKLERS || [];
   useGeometry(next);
   return true;
 }

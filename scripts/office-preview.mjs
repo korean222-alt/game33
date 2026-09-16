@@ -34,6 +34,17 @@ const SHOTS = [
   ['10-서버실', [-38.5, 1.62, -19.6], 0, 0],
   ['11-휴게실', [-32.0, 1.62, 4.6], 2.13, -0.05],
   ['12-전시홀', [30, 1.62, 28.4], -Math.PI * 0.55, -0.05],
+  // 문짝이 도는 자리. 정문을 열어 둔 채로 안쪽과 바깥쪽에서 한 장씩 찍는다.
+  ['13-정문-안에서', [0, 1.62, 26.6], Math.PI, -0.02],
+  ['14-정문-밖에서', [3.2, 1.62, 34.6], 0.08, -0.02],   // 광장 가로등 기둥을 피해 선다
+  ['15-북복도-문틈각도', [-38.5, 1.24, -16.4], 0, 0],
+  // 초소
+  ['16-서측초소', [-51, 1.62, 9.0], 0, 0.14],
+  ['17-하역장초소', [-16.5, 1.62, -35.0], 0.18, 0.14],
+  ['18-초소위에서', [-51, 4.82, -2.5], Math.PI, -0.06],
+  // 스프링클러
+  ['19-스프링클러-남복도', [-8, 1.62, 15.75], Math.PI / 2, 0],
+  ['20-스프링클러-정문홀', [0, 1.62, 22.0], Math.PI, 0.02],
 ];
 
 await fs.mkdir(OUT, { recursive: true });
@@ -80,9 +91,20 @@ try {
   await page.waitForFunction(() => !document.getElementById('btnStart').disabled);
   await page.click('#btnStart');
   await page.locator('#briefing').waitFor({ state: 'visible' });
-  const pages = await page.evaluate(async () => (await import('/js/mission-story.js')).MISSION.pages.length);
+  const pages = await page.evaluate(async () =>
+    (await import('/js/mission-story.js')).missionOf('office').pages.length);
   for (let i = 0; i < pages; i++) await page.click('#briefNext');
   await page.waitForFunction(() => window.__mr?.matchActive, null, { timeout: 90000 });
+
+  /* 찍기 전에 장면을 만들어 둔다. 정문은 열어 두고 스프링클러는 틀어 둔다 -
+   * 둘 다 "열렸을 때/돌 때" 만 보이는 것이라 기본 상태로는 확인할 수 없다. */
+  await page.evaluate(() => {
+    const game = window.__mr;
+    game.world.setDoorState('front', 'open');
+    game.world.setSprinkler('south', true);
+    game.world.update(0.5, game.camera);
+  });
+  await page.waitForTimeout(700);
 
   const result = await page.evaluate(async (shots) => {
     const game = window.__mr;
@@ -92,6 +114,8 @@ try {
       game.camera.position.set(pos[0], pos[1], pos[2]);
       game.camera.rotation.set(pitch, yaw, 0, 'YXZ');
       game.camera.updateMatrixWorld(true);
+      // 문이 도는 것도 물이 떨어지는 것도 시간이 지나야 보인다.
+      for (let i = 0; i < 20; i++) game.world.update(1 / 30, game.camera);
       game.world.scene.updateMatrixWorld(true);
       game.pipeline.render();
       game.pipeline.render();

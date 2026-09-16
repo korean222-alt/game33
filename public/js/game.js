@@ -14,7 +14,7 @@
 import * as THREE from 'three';
 import { QUALITY, NET, PLAYER, loadSettings, saveSettings, guessQuality } from './config.js';
 import { rayObstacleDistance, isIndoors, setActiveMap, CURRENT_MAP, getMap } from './map-data.js';
-import { DOOR, DoorSet, rollDoorStates, DOOR_REACH } from './doors.js';
+import { DOOR, DoorSet, rollDoorStates, DOOR_REACH, peekOffset } from './doors.js';
 import { GRENADE_ORDER, GRENADES, startingGrenades } from './grenades.js';
 import { AssetManager } from './assets.js';
 import { World } from './world.js';
@@ -26,7 +26,7 @@ import { VisualPipeline } from './visuals.js';
 
 import { ShotState } from './shot-state.js';
 import { traceShot } from './shot-trace.js';
-import { MISSION } from './mission-story.js';
+import { missionLine } from './mission-story.js';
 import { GameAudio } from './audio.js';
 import { compatibleMatch, UPDATE_MESSAGE } from './protocol.js';
 
@@ -113,6 +113,8 @@ export class Game {
     this.peek = null;
     // 울고 있는 화재경보기 (사무실). id -> { x, z, until }
     this._alarms = new Map();
+    // 돌고 있는 스프링클러 구역. id -> { area, until, nextHiss }
+    this._sprinklers = new Map();
   }
 
   /* ======================================================================= *
@@ -417,7 +419,7 @@ export class Game {
       this.siteProgress.set(d.id, 1);
       this.hud.setSiteDefused(d.id);
       this.world.setSiteDefused(d.id);
-      this.hud.radio(d.id === 'A' ? MISSION.siteA : MISSION.siteB);
+      this.hud.radio(missionLine(d.id === 'A' ? 'siteA' : 'siteB'));
     });
 
     s.on('npcsJoined', (d) => this.entities.spawnNpcs(d.npcs || []));
@@ -439,6 +441,22 @@ export class Game {
         : `${d.label} 작동`, 3200);
     });
     s.on('alarmStopped', (d) => this._alarms.delete(d.id));
+
+    /* 스프링클러. 이건 배너를 띄운다 - 경보기와 달리 "내가 켠 것" 이고,
+     * 몇 초 동안 유효한지 알아야 그 안에 움직일지 말지를 정할 수 있다. */
+    s.on('sprinklerStarted', (d) => {
+      if (!this.matchActive) return;
+      this._sprinklers.set(d.id, {
+        area: d.area, until: performance.now() + d.seconds * 1000, nextHiss: 0,
+      });
+      this.world.setSprinkler(d.id, true);
+      this.audio?.sprinkler(this._wetPoint(d.area), true);
+      this.hud.banner(`${d.label} 스프링클러 작동 — ${Math.round(d.seconds)}초간 시야가 나쁘다`, 3600);
+    });
+    s.on('sprinklerStopped', (d) => {
+      this._sprinklers.delete(d.id);
+      this.world.setSprinkler(d.id, false);
+    });
 
     // 팀원의 연결이 끊겼다. 아바타는 마지막 자리에 그대로 서 있고, 서버가
     // 자리를 비워 둔 채 복귀를 기다린다.
@@ -542,6 +560,8 @@ export class Game {
     this.gas = 0;
     this._doorBusyUntil = 0;
     this._alarms.clear();
+    this._sprinklers.clear();
+    this.world.clearSprinklers();
     this.grenades = startingGrenades();
     this.selectedGrenade = GRENADE_ORDER[0];
 
@@ -616,7 +636,7 @@ export class Game {
       this.hud.banner('재접속 완료 — 작전에 복귀했습니다', 3000);
       this.hud.radio('무전: 복귀 확인. 현재 상황을 갱신했다.');
     } else {
-      this.hud.radio(MISSION.entry);
+      this.hud.radio(missionLine('entry'));
     }
 
     // 소리가 아직 안 켜졌으면(브라우저가 제스처를 기다리는 중) 깨우고 안내한다.
@@ -744,6 +764,7 @@ export class Game {
 
     this._step(dt, now);
     this._ringAlarms(now);
+    this._runSprinklers(now);
     this.pipeline.render();
     this._trackFps(dt);
   };
@@ -757,6 +778,29 @@ export class Game {
       if (now < (a.nextRing || 0)) continue;
       a.nextRing = now + 1350;
       this.audio?.alarmBell({ x: a.x, y: 2.2, z: a.z });
+    }
+  }
+
+  /** 구역 사각형에서 내 귀에 가장 가까운 점. 물소리가 거기서 난다. */
+  _wetPoint(area) {
+    const eye = this.camera.position;
+    const clamp = (v, c, size) => Math.max(c - size / 2, Math.min(c + size / 2, v));
+    return { x: clamp(eye.x, area.x, area.w), y: 2.4, z: clamp(eye.z, area.z, area.d) };
+  }
+
+  /* 물소리는 도는 내내 난다. 서버가 매 초 패킷을 보내는 대신 시작과 끝만
+   * 받고, 소리는 여기서 이어 붙인다 - 경보기와 같은 방식이다. */
+  _runSprinklers(now) {
+    if (!this._sprinklers.size) return;
+    for (const [id, zone] of this._sprinklers) {
+      if (now >= zone.until) {
+        this._sprinklers.delete(id);
+        this.world.setSprinkler(id, false);
+        continue;
+      }
+      if (now < zone.nextHiss) continue;
+      zone.nextHiss = now + 1200;
+      this.audio?.sprinkler(this._wetPoint(zone.area));
     }
   }
 
@@ -1009,7 +1053,8 @@ export class Game {
     const along = across === 'x' ? 'z' : 'x';
     const side = this.player.pos[across] < door[across] ? 1 : -1;   // +1 = 문 너머가 +방향
     const eye = { x: 0, y: this.player.crouching ? 1.02 : 1.24, z: 0 };
-    eye[across] = door[across] - side * 0.26;      // 문짝 바로 앞(내 쪽)
+    // 문짝 바로 앞(내 쪽). 벽이 두꺼우면 그만큼 물러나야 눈이 벽 속에 안 들어간다.
+    eye[across] = door[across] - side * peekOffset(door);
     eye[along] = door[along];                      // 문 한가운데
     // yaw 규약: 정면 = (-sin yaw, -cos yaw). 문 너머를 보게 맞춘다.
     const yaw = across === 'x' ? (side > 0 ? -Math.PI / 2 : Math.PI / 2) : (side > 0 ? Math.PI : 0);

@@ -3,7 +3,11 @@
  *
  *  원작의 이름과 사건을 쓰지 않는 독자 설정이다. 한 판이 짧게 끝나지 않도록
  *  다섯 단계로 나누고, 단계마다 목표와 무전이 바뀐다.
+ *
+ *  아래 글은 저택을 전제로 쓰여 있다. 맵마다 다른 문구는 파일 끝의
+ *  objectiveLabel / phaseText / missionLine 을 거쳐 나간다.
  * ========================================================================== */
+import { CURRENT_MAP, getMap } from './map-data.js';
 
 /** 목표 정의. server.js 가 상태를 계산하고 HUD 가 이 문구를 보여 준다. */
 export const OBJECTIVES = {
@@ -123,4 +127,34 @@ export const MISSION = {
 /** 단계 id -> 인덱스 */
 export const phaseIndex = (id) => Math.max(0, PHASES.findIndex((p) => p.id === id));
 export const phaseOf = (id) => PHASES[phaseIndex(id)];
+
+/* ========================================================================== *
+ *  맵마다 다른 문구
+ *
+ *  위의 글은 전부 저택을 전제로 쓰여 있다. "저택 내부 진입", "북동쪽 작업실의
+ *  예비 발전기". 사무실 맵에서 그대로 띄우면 화면에는 사옥이 보이는데 목표에는
+ *  저택이라고 적혀 있다 - 실제로 그런 화면이 나와서 이 장치를 넣었다.
+ *
+ *  맵 파일이 STORY 를 들고 있으면 그것으로 덮어쓰고, 없으면 저택 문구를 쓴다.
+ *  단계 구조(무엇을 끝내야 다음으로 넘어가는가)는 덮어쓰지 않는다 - 그건 규칙이지
+ *  문구가 아니다.
+ * ========================================================================== */
+const storyOf = () => CURRENT_MAP?.STORY || {};
+
+/** 목표 한 줄의 이름. */
+export const objectiveLabel = (id) => storyOf().objectives?.[id] ?? OBJECTIVES[id]?.label ?? id;
+/** 단계 하나의 제목·안내·무전. 덮어쓴 것만 갈아 끼운다. */
+export const phaseText = (phase) => {
+  const override = storyOf().phases?.[phase.id];
+  return override ? { ...phase, ...override } : phase;
+};
+/** 무전 한 줄 (MISSION 의 열쇠). */
+export const missionLine = (key) => storyOf().mission?.[key] ?? MISSION[key];
+/**
+ * 브리핑에 쓰는 한 벌.
+ *
+ *  로비에서는 아직 맵을 켜지 않았다 (씬을 다시 짓는 것은 경기가 시작될 때다).
+ *  그래서 켜진 맵이 아니라 "지금 고른 맵 id" 로 묻는다.
+ */
+export const missionOf = (mapId) => ({ ...MISSION, ...(getMap(mapId)?.STORY?.mission || {}) });
 

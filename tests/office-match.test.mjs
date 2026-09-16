@@ -145,8 +145,41 @@ test('사무실의 소음원과 화재경보기가 동작한다', { timeout: 400
   const ring = await started;
   assert.equal(ring.by, host.id);
   assert.equal(ring.seconds, 8);
+  /* ---- 스프링클러 ----
+     경보기에 물려 있다. 2.5초 뒤에 물이 나오고 18초 뒤에 멎는다. */
+  const wet = await waitFor(host, 'sprinklerStarted', () => true, 10000);
+  const zone = OFFICE.SPRINKLERS.find((z) => z.id === wet.id);
+  assert.ok(zone, `모르는 스프링클러 구역: ${wet.id}`);
+  assert.equal(wet.id, alarm.zone, '경보기가 자기 구역을 적셔야 한다');
+  assert.ok(wet.heads.length > 0, '천장 헤드 자리가 실려야 화면에 물이 나온다');
+  assert.ok(wet.seconds >= 10, `${wet.seconds}초는 너무 짧다`);
+
   const stopped = await waitFor(host, 'alarmStopped', (d) => d.id === alarm.id, 14000);
   assert.ok(stopped);
+
+  assert.deepEqual(stderr, [], '서버가 오류를 뱉었다');
+});
+
+test('초소 저격수는 인원 수와 무관하게 늘 그 자리에 있다', { timeout: 40000 }, async (t) => {
+  const { connect, request, stderr } = await boot(t, 3199);
+  const { host, match } = await startOn(connect, request, 'office');
+
+  for (const entry of OFFICE.GARRISON) {
+    const npc = match.npcs.find((n) => n.id === entry.id);
+    assert.ok(npc, `${entry.id} 가 배치되지 않았다`);
+    assert.equal(npc.role, 'marksman');
+    assert.ok(Math.abs(npc.y - entry.post.y) < 0.01,
+      `${entry.id} 가 발판(${entry.post.y}m)이 아니라 ${npc.y}m 에 서 있다`);
+  }
+
+  /* 발판 위에 서 있는 것이 스냅샷에서도 유지되는가. 길찾기가 저들을 끌어
+   * 내리려 하면 몇 초 안에 y 가 0 으로 떨어진다. */
+  const first = await waitFor(host, 'snapshot');
+  const later = await waitFor(host, 'snapshot', (s) => s.t - first.t > 6000, 20000);
+  for (const entry of OFFICE.GARRISON) {
+    const npc = later.npcs.find((n) => n.id === entry.id);
+    assert.ok(npc && npc.y > 3, `${entry.id} 가 초소에서 내려왔다 (y ${npc?.y})`);
+  }
 
   assert.deepEqual(stderr, [], '서버가 오류를 뱉었다');
 });

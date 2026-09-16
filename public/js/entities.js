@@ -21,6 +21,9 @@ const HVT_COLOR = 0xd2512f;
 const CIVILIAN_COLOR = 0xcfc6ad;
 
 const KIND_LABEL = { suspect: '용의자', hvt: '주요 용의자', civilian: '민간인' };
+/** 역할이 있는 자는 이름표도 총도 다르다. 지금은 초소의 저격수뿐이다. */
+const ROLE_LABEL = { marksman: '저격수' };
+const ROLE_WEAPON = { marksman: 'sniper' };
 
 /*
  * 역할별 캐릭터 모델.
@@ -362,8 +365,10 @@ export class Entities {
         color: civilian ? CIVILIAN_COLOR : n.kind === 'hvt' ? HVT_COLOR : SUSPECT_COLOR,
         // '인질' 은 붙잡힌 시민에게만 붙는다. 그 시민을 붙잡고 있는 용의자는
         // 인질이 아니라 인질범이므로 제 이름표('주요 용의자')를 그대로 쓴다.
-        name: (civilian && n.hostage) ? '인질' : (KIND_LABEL[n.kind] || '용의자'),
+        name: (civilian && n.hostage) ? '인질'
+          : (ROLE_LABEL[n.role] || KIND_LABEL[n.kind] || '용의자'),
         kind: n.kind, armed: !civilian,
+        weapon: ROLE_WEAPON[n.role] || 'rifle',
       });
       avatar.latestHp = n.hp ?? n.maxHp ?? 100;
       avatar.group.position.set(n.x ?? 0, n.y ?? 0, n.z ?? 0);

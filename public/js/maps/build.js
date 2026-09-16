@@ -77,6 +77,12 @@ export function makePart(FURNITURE) {
 export function finishMap(map) {
   map.COLLIDERS = [
     ...map.WALLS.map((w) => ({ ...w, kind: 'wall' })),
+    /* 보이지 않지만 막는 것. 지금은 건물 지붕뿐이다.
+     *
+     *  지붕에 콜라이더가 없으면 밖에서 높은 데 올라선 사람 - 초소의 저격수 -
+     *  이 건물 위로 총알을 넘겨 반대편 마당까지 쏜다. 화면에는 지붕이 보이는데
+     *  총알만 통과하는 것이다. 그래서 껍데기도 콜라이더로 세운다. */
+    ...(map.SHELL || []).map((s) => ({ ...s, kind: 'shell' })),
     ...map.FURNITURE.map((f) => ({ ...f, kind: 'prop' })),
     ...map.PROPS.map((p) => ({
       x: p.x, z: p.z, y: p.yOff || 0, ...p.col, ry: p.ry || 0, kind: 'prop',

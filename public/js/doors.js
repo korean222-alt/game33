@@ -36,6 +36,55 @@ export const DOOR_ACTIONS = {
 export const DOOR_REACH = 1.9;
 const LEAF = 0.16;
 
+/* ========================================================================== *
+ *  문짝의 생김새
+ *
+ *  그리는 쪽(world.js)과 검사하는 쪽(tests/door-clearance)이 같은 값을 써야
+ *  "보이는 문"과 "실제로 도는 문"이 어긋나지 않는다. 그래서 숫자를 여기 둔다.
+ *
+ *  각도가 90도를 넘으면 안 된다. 예전에는 0.52π(93.6도)까지 돌렸는데, 그러면
+ *  문짝의 바깥쪽 모서리가 경첩 축을 지나 옆벽 안으로 파고든다 - 폭 3.2m 짜리
+ *  정문에서는 20cm 가 벽을 뚫고 들어가 문틈으로 보면 벽이 깨져 보였다.
+ *
+ *  경첩도 문틀 안쪽으로 5cm 들여 놓는다. 문짝 두께(7cm)가 경첩 축을 중심으로
+ *  반씩 나뉘어 있어서, 축이 문틀 모서리에 딱 붙어 있으면 활짝 열었을 때
+ *  두께의 절반이 벽 속에 들어간다.
+ * ========================================================================== */
+export const DOOR_OPEN_ANGLE = Math.PI * 0.48;
+export const DOOR_LEAF_THICKNESS = 0.07;
+/** 이 폭부터는 두 짝짜리로 단다. 3.2m 문짝 한 장은 열면 방을 가로지른다. */
+export const DOUBLE_LEAF_SPAN = 2.2;
+const LEAF_INSET = 0.05;
+
+/**
+ * 문 한 짝의 치수.
+ * @returns [{ hinge, offset, width }]
+ *   hinge  +1/-1 - 경첩에서 문짝이 뻗는 방향 (문 축 기준)
+ *   offset 문 중심에서 경첩까지의 거리 (문 축 기준)
+ *   width  문짝 폭
+ */
+export function doorLeaves(door) {
+  const half = door.span / 2;
+  if (door.span >= DOUBLE_LEAF_SPAN) {
+    const width = half - 0.06;
+    return [
+      { hinge: 1, offset: -(half - LEAF_INSET), width },
+      { hinge: -1, offset: half - LEAF_INSET, width },
+    ];
+  }
+  const hinge = door.hinge ?? 1;
+  return [{ hinge, offset: -hinge * (half - LEAF_INSET), width: door.span - 0.06 }];
+}
+
+/**
+ * 문틈으로 볼 때 눈이 서는 거리 (문 면에서 내 쪽으로).
+ *
+ *  벽 두께의 절반보다 확실히 멀어야 한다. 그러지 않으면 눈이 벽 속에 들어가고,
+ *  카메라 근평면(5cm)이 벽을 잘라 내면서 반대편이 그냥 뚫려 보인다. 사무실
+ *  외벽은 45cm 라 예전의 고정값 26cm 로는 눈이 벽 안쪽 3.5cm 지점에 섰다.
+ */
+export const peekOffset = (door) => Math.max(0.26, (door.thickness || 0.3) / 2 + 0.16);
+
 /**
  * (x,z) 에서 문까지의 거리.
  *

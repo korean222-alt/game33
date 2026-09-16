@@ -600,6 +600,27 @@ export class GameAudio {
     }
   }
 
+  /**
+   * 스프링클러.
+   *
+   *  천장 헤드에서 물이 터져 나오는 '쉭' 과 바닥에 떨어지는 잔소리. 한 번
+   *  부르면 1.4초쯤 나므로, 도는 동안 게임 루프가 반복해서 부른다.
+   *
+   *  @param burst 터지는 순간이면 true (첫 물살이 세다)
+   */
+  sprinkler(position = null, burst = false) {
+    const bus = this._bus(position);
+    if (!bus) return;
+    if (burst) {
+      this._voice(bus, { duration: 0.18, level: 0.4, frequency: 2600 });
+      this._voice(bus, { at: 0.06, duration: 0.5, level: 0.3, frequency: 900 });
+    }
+    // 흰 잡음 세 겹. 주파수를 달리해 물줄기와 바닥 소리를 나눈다.
+    this._voice(bus, { duration: 1.5, level: 0.16, frequency: 5200 });
+    this._voice(bus, { at: 0.1, duration: 1.4, level: 0.12, frequency: 2000 });
+    this._voice(bus, { at: 0.2, duration: 1.3, level: 0.08, frequency: 700 });
+  }
+
   /** 투척물 안전핀과 던지는 동작. */
   pin() {
     const bus = this._bus();

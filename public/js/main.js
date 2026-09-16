@@ -12,7 +12,7 @@ import { isTouchDevice } from './input.js';
 import { loadSettings, saveSettings, guessQuality } from './config.js';
 import { GameAudio } from './audio.js';
 
-import { MISSION } from './mission-story.js';
+import { missionOf } from './mission-story.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -400,10 +400,12 @@ function updateBriefingStatus() {
 function renderBriefing() {
   const briefing = state.briefing;
   if (!briefing) return;
-  const page = MISSION.pages[briefing.page];
-  $('missionTitle').textContent = MISSION.title;
-  $('missionLocation').textContent = MISSION.location;
-  $('missionTime').textContent = MISSION.time;
+  // 브리핑은 고른 맵의 것으로. 사옥에서 저택 이야기를 읽게 두지 않는다.
+  const mission = missionOf(state.lobby?.mapId);
+  const page = mission.pages[Math.min(briefing.page, mission.pages.length - 1)];
+  $('missionTitle').textContent = mission.title;
+  $('missionLocation').textContent = mission.location;
+  $('missionTime').textContent = mission.time;
   $('briefStep').textContent = page.label;
   $('briefTitle').textContent = page.title;
   $('briefBody').textContent = page.body;
@@ -411,7 +413,7 @@ function renderBriefing() {
   $('briefBack').disabled = briefing.page === 0 || briefing.confirmed;
   $('briefNext').disabled = briefing.confirmed;
   $('briefNext').textContent = briefing.confirmed ? '진입 준비 완료' :
-    briefing.page === MISSION.pages.length - 1 ? '브리핑 확인 · 진입 준비' : '다음 보고';
+    briefing.page === mission.pages.length - 1 ? '브리핑 확인 · 진입 준비' : '다음 보고';
   updateBriefingStatus();
 }
 
@@ -424,7 +426,8 @@ function initLobby() {
   $('briefNext').addEventListener('click', () => {
     const briefing = state.briefing;
     if (!briefing || briefing.confirmed || !state.socket?.connected) return;
-    if (briefing.page < MISSION.pages.length - 1) { briefing.page++; renderBriefing(); return; }
+    const pages = missionOf(state.lobby?.mapId).pages.length;
+    if (briefing.page < pages - 1) { briefing.page++; renderBriefing(); return; }
     briefing.confirmed = true;
     renderBriefing();
     state.socket.emit('briefingReady', { id: briefing.id });

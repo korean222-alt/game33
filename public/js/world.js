@@ -10,8 +10,9 @@
 import * as THREE from 'three';
 import {
   MAP, BACKUP_GENERATOR, WALLS, PROPS, LIGHTS, BOMB_SITES, FURNITURE, DOORWAYS, EXTRACTION,
+  SPRINKLERS,
 } from './map-data.js';
-import { DOOR, isBlocking } from './doors.js';
+import { DOOR, isBlocking, doorLeaves, DOOR_OPEN_ANGLE, DOOR_LEAF_THICKNESS } from './doors.js';
 import { wallSections, OFFICE_BANDS } from './wall-sections.js';
 import { QUALITY } from './config.js';
 import { roomMaterials, dressRoom } from './visuals.js';
@@ -22,7 +23,6 @@ import { roomMaterials, dressRoom } from './visuals.js';
  * 건드리지 않고, 그릴 때만 배율을 곱한다.
  */
 const LIGHT_INTENSITY_SCALE = 4;
-const DOOR_THICKNESS = 0.07;
 
 /** 씬에서 떼어 낸 가지의 지오메트리·재질·텍스처를 놓아 준다. */
 function disposeTree(root) {
@@ -44,6 +44,14 @@ function disposeTree(root) {
  * 충돌 판정은 map-data 의 원본 높이를 쓰므로 게임플레이는 그대로다. */
 const CEILING_OVERLAP = 0.08;
 
+/* 스프링클러 물줄기. 구역 전체(92 x 16.5m)에 뿌리면 입자가 수만 개 필요하고
+ * 정작 눈앞은 성기다. 카메라 둘레 7m 안에만 뿌린다 - 걸어 들어가면 그때부터
+ * 앞이 뿌옇고, 구역 밖으로 나가면 뚝 그친다. */
+const RAIN_COUNT = 1200;
+const RAIN_REACH = 7;
+const RAIN_LENGTH = 0.22;
+const RAIN_SPEED = 8.5;
+
 export class World {
   constructor(renderer, assets) {
     this.renderer = renderer;
@@ -54,6 +62,7 @@ export class World {
     this.evidenceMarkers = new Map();
     this.doorMeshes = new Map();    // doorId -> { pivot, leaf, state }
     this.power = true;              // 저택 전기 (정전되면 실내등이 꺼진다)
+    this.sprinklers = null;         // 스프링클러 구역 (사무실)
     this._t = 0;
   }
 
@@ -72,6 +81,7 @@ export class World {
     this._buildProps();
     this._buildFurniture();
     this._buildGenerator();
+    this._buildSprinklers();
     this._buildLights(q);
     this._buildSiteMarkers();
     this._buildExtraction();
@@ -105,6 +115,7 @@ export class World {
     this.torchOn = false;
     this.generatorLever = null;
     this.generatorLamp = null;
+    this.sprinklers = null;
     this.extraction = null;
     this.dust = null;
     this._t = 0;
@@ -253,19 +264,26 @@ export class World {
       color: office ? 0xa8adb2 : 0xc3a46b, roughness: .3, metalness: .85 });
 
     for (const door of DOORWAYS) {
-      // 경첩 축을 중심으로 도는 피벗. 회전은 보기용이고 충돌은 서버가 판정한다.
-      const pivot = new THREE.Group();
-      const width = door.span;
-      const leaf = new THREE.Mesh(
-        new THREE.BoxGeometry(width - 0.04, MAP.doorHeight - 0.04, DOOR_THICKNESS), leafMat,
-      );
-      leaf.position.set(width / 2, (MAP.doorHeight - 0.04) / 2, 0);
-      leaf.castShadow = leaf.receiveShadow = true;
-      pivot.add(leaf);
+      /* 경첩 축을 중심으로 도는 피벗. 회전은 보기용이고 충돌은 서버가 판정한다.
+       * 폭이 넓은 문은 두 짝으로 달린다 (doors.js 의 doorLeaves 가 정한다). */
+      const leaves = doorLeaves(door).map((spec) => {
+        const pivot = new THREE.Group();
+        const leaf = new THREE.Mesh(
+          new THREE.BoxGeometry(spec.width, MAP.doorHeight - 0.04, DOOR_LEAF_THICKNESS), leafMat,
+        );
+        leaf.position.set(spec.width / 2, (MAP.doorHeight - 0.04) / 2, 0);
+        leaf.castShadow = leaf.receiveShadow = true;
+        pivot.add(leaf);
 
-      const knob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), knobMat);
-      knob.position.set(width - 0.16, 1.02, DOOR_THICKNESS);
-      pivot.add(knob);
+        const knob = new THREE.Mesh(new THREE.SphereGeometry(0.045, 8, 6), knobMat);
+        knob.position.set(spec.width - 0.14, 1.02, DOOR_LEAF_THICKNESS);
+        pivot.add(knob);
+
+        // 경첩은 문틀에서 조금 안쪽. hinge 가 -1 이면 반대쪽에서 열린다.
+        pivot.position.x = spec.offset;
+        pivot.scale.x = spec.hinge;
+        return pivot;
+      });
 
       // 문틀
       const frame = new THREE.Group();
@@ -273,11 +291,11 @@ export class World {
         const post = new THREE.Mesh(
           new THREE.BoxGeometry(0.09, MAP.doorHeight, door.thickness + 0.08), frameMat,
         );
-        post.position.set(side * (width / 2 + 0.045), MAP.doorHeight / 2, 0);
+        post.position.set(side * (door.span / 2 + 0.045), MAP.doorHeight / 2, 0);
         frame.add(post);
       }
       const head = new THREE.Mesh(
-        new THREE.BoxGeometry(width + 0.18, 0.09, door.thickness + 0.08), frameMat,
+        new THREE.BoxGeometry(door.span + 0.18, 0.09, door.thickness + 0.08), frameMat,
       );
       head.position.y = MAP.doorHeight + 0.045;
       frame.add(head);
@@ -285,12 +303,9 @@ export class World {
       const group = new THREE.Group();
       group.position.set(door.x, 0, door.z);
       group.rotation.y = door.axis === 'x' ? Math.PI / 2 : 0;
-      // 경첩은 한쪽 끝. hinge 가 -1 이면 반대쪽에서 열린다.
-      pivot.position.x = -door.hinge * width / 2;
-      pivot.scale.x = door.hinge;
-      group.add(frame, pivot);
+      group.add(frame, ...leaves);
       this.scene.add(group);
-      this.doorMeshes.set(door.id, { group, pivot, angle: 0, target: 0, state: DOOR.CLOSED });
+      this.doorMeshes.set(door.id, { group, leaves, angle: 0, target: 0, state: DOOR.CLOSED });
     }
   }
 
@@ -299,9 +314,9 @@ export class World {
     const entry = this.doorMeshes.get(id);
     if (!entry) return;
     entry.state = state;
-    entry.target = isBlocking(state) ? 0 : Math.PI * 0.52;
-    if (state === DOOR.DESTROYED) entry.target = Math.PI * 0.62;
-    entry.pivot.visible = !entry.peeking && state !== DOOR.DESTROYED;
+    entry.target = isBlocking(state) ? 0 : DOOR_OPEN_ANGLE;
+    const visible = !entry.peeking && state !== DOOR.DESTROYED;
+    for (const leaf of entry.leaves) leaf.visible = visible;
   }
 
   applyDoorStates(list) {
@@ -319,7 +334,8 @@ export class World {
     const entry = this.doorMeshes.get(id);
     if (!entry) return;
     entry.peeking = !!on;
-    entry.pivot.visible = on ? false : entry.state !== DOOR.DESTROYED;
+    const visible = on ? false : entry.state !== DOOR.DESTROYED;
+    for (const leaf of entry.leaves) leaf.visible = visible;
   }
 
   _buildFurniture() {
@@ -359,6 +375,8 @@ export class World {
 
   _buildGenerator() {
     const gen = BACKUP_GENERATOR;
+    // 정전이 없는 맵에는 예비 발전기도 없다.
+    if (!gen) return;
     const panel = new THREE.Mesh(new THREE.BoxGeometry(.55, .32, .06),
       new THREE.MeshStandardMaterial({ color: 0x22262b, roughness: .65 }));
     panel.position.set(gen.x, .76, gen.z + gen.d / 2 + .035);
@@ -380,6 +398,132 @@ export class World {
       new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(canvas), side: THREE.DoubleSide }));
     label.position.set(gen.x, 1.3, gen.z + gen.d / 2);
     this.scene.add(label);
+  }
+
+  /* ---- 스프링클러 ---------------------------------------------------------
+   *  천장의 헤드는 늘 보인다 (작은 놋쇠 꼭지). 물은 경보기를 당겨야 나온다.
+   *
+   *  비는 구역 전체(92 x 16.5m)에 뿌리지 않는다. 그 넓이를 다 채우려면 입자가
+   *  수만 개 필요하고, 정작 눈앞은 여전히 성기다. 대신 카메라 둘레 12m 안에만
+   *  뿌리고 구역 밖으로는 넘기지 않는다 - 걸어 들어가면 그 순간부터 앞이
+   *  뿌옇고, 구역 경계를 넘는 순간 뚝 그친다.
+   * ------------------------------------------------------------------------ */
+  _buildSprinklers() {
+    if (!SPRINKLERS.length) return;
+    const headMat = new THREE.MeshStandardMaterial({
+      color: 0xb08a4a, roughness: 0.35, metalness: 0.8,
+    });
+    const stem = new THREE.CylinderGeometry(0.022, 0.022, 0.12, 6);
+    const rose = new THREE.ConeGeometry(0.055, 0.05, 8);
+    const zones = new Map();
+    for (const zone of SPRINKLERS) {
+      for (const [hx, hz] of zone.heads || []) {
+        const head = new THREE.Group();
+        const pipe = new THREE.Mesh(stem, headMat);
+        pipe.position.y = MAP.height - 0.06;
+        const cap = new THREE.Mesh(rose, headMat);
+        cap.position.y = MAP.height - 0.14;
+        cap.rotation.x = Math.PI;
+        head.add(pipe, cap);
+        head.position.set(hx, 0, hz);
+        this.scene.add(head);
+      }
+      zones.set(zone.id, this._makeRain(zone));
+    }
+    this.sprinklers = { zones, active: new Set() };
+  }
+
+  /** 구역 하나의 빗줄기와 젖은 바닥. 꺼진 채로 만들어 둔다. */
+  _makeRain(zone) {
+    /* 점이 아니라 짧은 선분으로 그린다. 물방울을 점으로 찍으면 아무리 많이
+     * 뿌려도 먼지처럼 보이고, 실제로 그렇게 보였다. 20cm 짜리 세로 선분
+     * 1,200 개면 눈앞이 제대로 뿌옇다. */
+    const position = new Float32Array(RAIN_COUNT * 6);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(position, 3));
+    const drops = new THREE.LineSegments(geo, new THREE.LineBasicMaterial({
+      color: 0xc8dce8, transparent: true, opacity: 0.42, depthWrite: false,
+    }));
+    drops.frustumCulled = false;
+    drops.visible = false;
+    this.scene.add(drops);
+
+    // 젖은 바닥. 구역 전체에 얇게 깔아 두고 반사만 올린다.
+    const wet = new THREE.Mesh(
+      new THREE.PlaneGeometry(zone.area.w, zone.area.d),
+      new THREE.MeshStandardMaterial({
+        color: 0x4b5e6b, roughness: 0.12, metalness: 0.35,
+        transparent: true, opacity: 0, depthWrite: false,
+      }),
+    );
+    wet.rotation.x = -Math.PI / 2;
+    wet.position.set(zone.area.x, 0.045, zone.area.z);
+    wet.visible = false;
+    this.scene.add(wet);
+
+    return { zone, drops, wet, seeded: false };
+  }
+
+  /** 서버가 알려 준 스프링클러 상태. */
+  setSprinkler(id, on) {
+    const entry = this.sprinklers?.zones.get(id);
+    if (!entry) return;
+    if (on) {
+      this.sprinklers.active.add(id);
+      entry.seeded = false;
+      entry.drops.visible = true;
+      entry.wet.visible = true;
+    } else {
+      this.sprinklers.active.delete(id);
+      entry.drops.visible = false;
+      entry.wet.visible = false;
+      entry.wet.material.opacity = 0;
+    }
+  }
+
+  clearSprinklers() {
+    if (!this.sprinklers) return;
+    for (const id of [...this.sprinklers.active]) this.setSprinkler(id, false);
+  }
+
+  /** 빗줄기를 한 프레임 굴린다. */
+  _updateRain(dt, camera) {
+    if (!this.sprinklers?.active.size || !camera) return;
+    const top = MAP.height - 0.25;
+    for (const id of this.sprinklers.active) {
+      const entry = this.sprinklers.zones.get(id);
+      const a = entry.zone.area;
+      const eye = camera.position;
+      // 카메라가 구역에서 멀면 그릴 필요가 없다 - 비는 눈앞에만 뿌린다.
+      const near = Math.abs(eye.x - a.x) < a.w / 2 + RAIN_REACH
+        && Math.abs(eye.z - a.z) < a.d / 2 + RAIN_REACH;
+      entry.drops.visible = near;
+      // 바닥이 젖어드는 데는 시간이 조금 걸린다.
+      entry.wet.material.opacity = Math.min(0.3, entry.wet.material.opacity + dt * 0.25);
+      if (!near) continue;
+      const position = entry.drops.geometry.attributes.position;
+      const array = position.array;
+      /** 물줄기 하나를 카메라 둘레 아무 데나 다시 세운다. */
+      const spawn = (i, y) => {
+        const o = i * 6;
+        const x = clampRange(eye.x + (Math.random() - 0.5) * RAIN_REACH * 2, a.x, a.w);
+        const z = clampRange(eye.z + (Math.random() - 0.5) * RAIN_REACH * 2, a.z, a.d);
+        array[o] = x; array[o + 1] = y; array[o + 2] = z;
+        array[o + 3] = x; array[o + 4] = y - RAIN_LENGTH; array[o + 5] = z;
+      };
+      if (!entry.seeded) {
+        for (let i = 0; i < RAIN_COUNT; i++) spawn(i, Math.random() * top);
+        entry.seeded = true;
+      }
+      const fall = RAIN_SPEED * dt;
+      for (let i = 0; i < RAIN_COUNT; i++) {
+        const o = i * 6;
+        const y = array[o + 1] - fall;
+        if (y - RAIN_LENGTH < 0.02) spawn(i, top - Math.random() * 0.4);
+        else { array[o + 1] = y; array[o + 4] = y - RAIN_LENGTH; }
+      }
+      position.needsUpdate = true;
+    }
   }
 
   /* ---- 소품 (GLB, 없으면 placeholder) ----------------------------------- */
@@ -671,10 +815,11 @@ export class World {
     }
     for (const m of this.evidenceMarkers.values()) { m.taken = false; m.group.visible = true; }
     this.setExtractionActive(false);
+    this.clearSprinklers();
     for (const entry of this.doorMeshes.values()) {
       entry.state = DOOR.CLOSED; entry.angle = entry.target = 0;
       entry.peeking = false;
-      entry.pivot.rotation.y = 0; entry.pivot.visible = true;
+      for (const leaf of entry.leaves) { leaf.rotation.y = 0; leaf.visible = true; }
     }
   }
 
@@ -682,12 +827,13 @@ export class World {
     this._t += dt;
     if (this.dust) this.dust.position.y = Math.sin(this._t * .12) * .08;
     this._updateLightPool(dt, camera);
+    this._updateRain(dt, camera);
 
     // 문 여닫힘 보간
     for (const entry of this.doorMeshes.values()) {
       if (Math.abs(entry.angle - entry.target) < 0.002) continue;
       entry.angle += (entry.target - entry.angle) * Math.min(1, dt * 9);
-      entry.pivot.rotation.y = entry.angle;
+      for (const leaf of entry.leaves) leaf.rotation.y = entry.angle;
     }
 
     // 미해체 지점의 LED 를 깜빡여서 눈에 띄게
@@ -752,6 +898,11 @@ function evidenceShape(id) {
         { w: 0.24, h: 0.03, d: 0.32, y: 0.055 },
       ];
   }
+}
+
+/** 값을 [center - size/2, center + size/2] 안으로 접어 넣는다. */
+function clampRange(value, center, size) {
+  return Math.max(center - size / 2, Math.min(center + size / 2, value));
 }
 
 /** 두 줄까지 들어가는 작은 이름표 스프라이트. */

@@ -13,6 +13,11 @@
  *  범위의 경비를 그쪽으로 끌어당긴다. 공짜는 아니다 - 당기는 동안 바로 옆에
  *  있는 자에게는 그냥 들킨다.
  *
+ *  경보기에는 스프링클러가 물려 있다. 2.5초 뒤 그 방화구역의 헤드가 터져
+ *  18초간 물이 돈다. 물이 도는 구역에서는 서로 잘 안 보이고(밝기 계산이
+ *  내려간다) 거기서 난 소리도 잘 안 들린다. 적에게도 똑같이 적용되므로
+ *  무적 시간이 아니라 거리를 좁히는 도구다.
+ *
  *  맵에 AMBIENT_NOISE / ALARMS 가 없으면 이 파일의 함수들은 전부 즉시 돌아온다.
  *  저택은 예전과 정확히 똑같이 조용하다.
  * ========================================================================== */
@@ -36,15 +41,39 @@ const ALARM_LEVEL = 0.72;
  */
 const HUMAN_MEMORY_MS = 6000;
 
+/** 경보기를 당기고 물이 나오기까지. */
+export const SPRINKLER_DELAY_MS = 2500;
+/** 한 번 터지면 이만큼 돈다. */
+export const SPRINKLER_MS = 18000;
+/** 물속에서의 밝기 배율. 시야 판정(visibilityFactor)이 이만큼 내려간다. */
+export const WET_BRIGHTNESS = 0.42;
+/** 물속에서 난 소리가 NPC 에게 닿는 배율. */
+export const WET_NOISE = 0.5;
+
 /** 이 맵에 사건이 있는가. */
 const sourcesOf = (room) => room.map.AMBIENT_NOISE || [];
 const alarmsOf = (room) => room.map.ALARMS || [];
+const sprinklersOf = (room) => room.map.SPRINKLERS || [];
 
 /** 방이 새 임무를 시작할 때 사건 상태를 비운다. */
 export function resetEvents(room) {
   room.ambientAt = new Map();     // 소음원 id -> 다음에 울릴 시각
   room.alarmUntil = new Map();    // 경보기 id -> 그칠 시각
   room.alarmPulseAt = new Map();  // 경보기 id -> 다음 펄스 시각
+  room.sprinklerAt = new Map();   // 구역 id -> 물이 나올 시각
+  room.sprinklerUntil = new Map();// 구역 id -> 멎을 시각
+}
+
+/** (x,z) 에 지금 물이 쏟아지고 있는가. */
+export function wetAt(room, x, z) {
+  if (!room.sprinklerUntil?.size) return false;
+  const t = now();
+  for (const zone of sprinklersOf(room)) {
+    if ((room.sprinklerUntil.get(zone.id) || 0) <= t) continue;
+    const a = zone.area;
+    if (Math.abs(x - a.x) <= a.w / 2 && Math.abs(z - a.z) <= a.d / 2) return true;
+  }
+  return false;
 }
 
 /** 기계 소리를 NPC 에게 전달한다. 사람이 낸 최근 소리는 건드리지 않는다. */
@@ -98,12 +127,58 @@ export function pullAlarm(room, alarmId, byId, io) {
   if ((room.alarmUntil.get(alarmId) || 0) > t) return false;
   room.alarmUntil.set(alarmId, t + ALARM_RING_MS);
   room.alarmPulseAt.set(alarmId, t);
+  // 같은 손잡이에 스프링클러가 물려 있다. 이미 돌고 있으면 다시 예약하지 않는다.
+  const zone = sprinklersOf(room).find((s) => s.id === alarm.zone);
+  if (zone && (room.sprinklerUntil.get(zone.id) || 0) <= t && !room.sprinklerAt.has(zone.id)) {
+    room.sprinklerAt.set(zone.id, t + SPRINKLER_DELAY_MS);
+  }
   io.to(room.code).emit('alarmStarted', {
     id: alarm.id, x: alarm.x, z: alarm.z, label: alarm.label,
     seconds: ALARM_RING_MS / 1000, by: byId,
   });
-  io.to(room.code).emit('radio', { text: `무전: ${alarm.label} 작동. 소리 나는 쪽으로 사람이 몰린다.` });
+  io.to(room.code).emit('radio', {
+    text: zone
+      ? `무전: ${alarm.label} 작동. 잠시 뒤 ${zone.label} 스프링클러가 돈다.`
+      : `무전: ${alarm.label} 작동. 소리 나는 쪽으로 사람이 몰린다.`,
+  });
   return true;
+}
+
+/**
+ * 스프링클러를 한 틱 굴린다.
+ *
+ *  물이 도는 동안 NPC 쪽에서 달라지는 것은 두 가지뿐이고(밝기·소리), 둘 다
+ *  다른 파일이 wetAt 으로 물어본다. 여기서 하는 일은 켜고 끄고 알리는 것이다.
+ */
+export function updateSprinklers(room, io) {
+  if (!room.sprinklerAt?.size && !room.sprinklerUntil?.size) return;
+  const t = now();
+  for (const zone of sprinklersOf(room)) {
+    const due = room.sprinklerAt.get(zone.id);
+    if (due !== undefined && t >= due) {
+      room.sprinklerAt.delete(zone.id);
+      room.sprinklerUntil.set(zone.id, t + SPRINKLER_MS);
+      io.to(room.code).emit('sprinklerStarted', {
+        id: zone.id, label: zone.label, area: zone.area,
+        heads: zone.heads || [], seconds: SPRINKLER_MS / 1000,
+      });
+      /* 물벼락. 직원들은 놀라서 흩어지고, 무장 인원도 조금 흔들린다 -
+       * 시야가 나빠진다는 것을 저쪽도 안다. */
+      for (const npc of room.npcs) {
+        if (!npc.alive) continue;
+        const a = zone.area;
+        if (Math.abs(npc.x - a.x) > a.w / 2 || Math.abs(npc.z - a.z) > a.d / 2) continue;
+        if (npc.kind === 'civilian') npc.panic = Math.min(1, (npc.panic || 0) + 0.5);
+        else npc.morale = Math.max(0, npc.morale - 0.08);
+      }
+      continue;
+    }
+    const until = room.sprinklerUntil.get(zone.id);
+    if (until !== undefined && t >= until) {
+      room.sprinklerUntil.delete(zone.id);
+      io.to(room.code).emit('sprinklerStopped', { id: zone.id });
+    }
+  }
 }
 
 /** 울고 있는 경보기를 한 틱 굴린다. */

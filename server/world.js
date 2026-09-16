@@ -15,6 +15,7 @@ import {
 import { now, dist2D, at3, emitNoise } from './util.js';
 import { damagePlayer } from './combat.js';
 import { setDoorState } from './door-actions.js';
+import { wetAt, WET_BRIGHTNESS } from './events.js';
 
 export function makeWorld(room, dt, io) {
   const colliders = room.doors.colliders();
@@ -35,8 +36,12 @@ export function makeWorld(room, dt, io) {
     alliesNear: 0,
     random: Math.random,
     /* 저택 전기가 끊기면 실내등은 계산에서 빠진다. 그래서 정전 뒤에는
-     * 실내에서 서로가 잘 안 보인다 - 적도, 나도. */
-    brightness: (x, z) => brightnessAt(x, z, room.power ? LIGHTS : outdoorLights()),
+     * 실내에서 서로가 잘 안 보인다 - 적도, 나도.
+     *
+     * 스프링클러가 도는 구역도 같은 자리에서 처리한다. 불은 켜져 있지만
+     * 물이 빛을 흩어서 사람이 늦게 눈에 띈다. */
+    brightness: (x, z) => brightnessAt(x, z, room.power ? LIGHTS : outdoorLights())
+      * (wetAt(room, x, z) ? WET_BRIGHTNESS : 1),
     playerById: (id) => players.find((p) => p.id === id) || null,
     nearestPlayer: (npc) => {
       let best = null, bestD = Infinity;
@@ -91,7 +96,8 @@ export function makeWorld(room, dt, io) {
         if (player) player.suppressedAt = t;
         return;
       }
-      const dmg = Math.round(SUSPECT_DAMAGE * diff.dmgMul * (0.85 + Math.random() * 0.35));
+      // 역할이 정한 한 발의 무게. 저격수는 34, 나머지는 13.
+      const dmg = Math.round((npc.damage ?? SUSPECT_DAMAGE) * diff.dmgMul * (0.85 + Math.random() * 0.35));
       damagePlayer(room, player, dmg, npc.id, io, npc);
     },
     onStateChange: (npc) => { npc.dirty = true; },

@@ -3,6 +3,7 @@
  * ========================================================================== */
 import { COLLIDERS, resolveCircle, zoneAt } from '../public/js/map-data.js';
 import { deliverNoise } from '../public/js/suspect-ai.js';
+import { wetAt, WET_NOISE } from './events.js';
 
 export const now = () => Date.now();
 export const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
@@ -40,7 +41,10 @@ export function makeRoomCode() {
  *  소리
  * ========================================================================== */
 export function emitNoise(room, x, z, level, type, byId = null) {
-  const event = { x, z, level, type, by: byId, t: now() };
+  /* 물소리가 발소리를 덮는다. 스프링클러가 도는 구역에서 난 소리는 절반만
+   * 전달된다 - 이게 "경보기를 당기고 그 구역으로 들어간다" 를 성립시킨다. */
+  const wet = wetAt(room, x, z) ? WET_NOISE : 1;
+  const event = { x, z, level: level * wet, type, by: byId, t: now() };
   const colliders = room.doors.colliders();
   for (const npc of room.npcs) {
     if (!npc.alive) continue;
@@ -59,7 +63,7 @@ export function emitNoise(room, x, z, level, type, byId = null) {
  * 용의자의 머리 위에 '인질' 이라는 이름표가 붙었다. 뜻이 다른 값이니 따로 보낸다.
  */
 export const npcPublic = (n) => ({
-  id: n.id, kind: n.kind, x: +n.x.toFixed(2), y: +n.y.toFixed(2), z: +n.z.toFixed(2),
+  id: n.id, kind: n.kind, role: n.role || null, x: +n.x.toFixed(2), y: +n.y.toFixed(2), z: +n.z.toFixed(2),
   yaw: +n.yaw.toFixed(2), hp: Math.max(0, n.hp), maxHp: n.maxHp,
   state: n.state,
   hostage: n.kind === 'civilian' && !!n.hostage,        // 붙잡혀 있는 시민
