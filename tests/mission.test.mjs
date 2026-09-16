@@ -9,7 +9,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { PHASES, OBJECTIVES, MISSION, phaseIndex, phaseOf } from '../public/js/mission-story.js';
 import {
-  objectiveState, objectiveReport, phaseComplete, missedObjectives, neutralised,
+  objectiveState, objectiveReport, phaseComplete, missedObjectives, neutralised, STALL_MS,
 } from '../public/js/objectives.js';
 import { scoreMission, gradeAdvice, SCORE } from '../public/js/scoring.js';
 import { EXTRACTION } from '../public/js/map-data.js';
@@ -170,6 +170,57 @@ test('해체 · 증거 · 무피해 · 체포 우선 목표', () => {
 
 test('모르는 목표 id 는 끝난 것으로 처리되지 않는다', () => {
   assert.equal(objectiveState(room(), '없는목표').done, false);
+});
+
+/* ---- 마지막 한둘을 못 찾아 판이 멎는 일 ---------------------------------- */
+test('남은 인원이 셋 이하로 줄면 어느 구역에 있는지 목표에 적힌다', () => {
+  const many = room({
+    npcs: [1, 2, 3, 4].map((i) => suspect({ id: `s${i}`, x: 0, z: 0 })),
+  });
+  assert.equal(objectiveState(many, 'suspects').detail, '',
+    '수색할 게 많이 남은 동안에는 위치를 알려 주지 않는다');
+
+  const few = room({ npcs: [suspect({ id: 's1', x: 0, z: 0 })] });
+  const detail = objectiveState(few, 'suspects').detail;
+  assert.match(detail, /남은 1명/, `위치가 안 적혔다: ${detail}`);
+});
+
+test('사람을 세는 목표는 시한이 지나면 "산개" 로 보고 넘어간다', () => {
+  const stuck = () => room({
+    phase: phaseIndex('clear'),
+    phaseEnteredAt: Date.now() - STALL_MS - 1000,
+    npcs: [suspect({ id: 's1', x: 0, z: 0 })],
+  });
+
+  const r = stuck();
+  assert.equal(objectiveState(r, 'suspects').stalled, true);
+  assert.equal(objectiveState(r, 'suspects').done, true, '시한이 지나면 다음 단계로 넘어간다');
+  assert.deepEqual([objectiveState(r, 'suspects').have, objectiveState(r, 'suspects').need], [0, 1],
+    '넘어가더라도 숫자는 사실대로 적는다');
+  assert.equal(phaseComplete(r), true);
+
+  // 방금 들어온 단계는 아직 멎은 것이 아니다.
+  const fresh = stuck();
+  fresh.phaseEnteredAt = Date.now();
+  assert.equal(objectiveState(fresh, 'suspects').done, false);
+
+  // 지금 단계가 붙잡고 있지 않은 목표는 시한을 타지 않는다. 그러지 않으면
+  // 아직 오지도 않은 단계의 목표까지 시간으로 끝난 것이 되어 점수가 거짓이 된다.
+  const early = stuck();
+  early.phase = phaseIndex('approach');
+  assert.equal(objectiveState(early, 'suspects').done, false);
+  assert.ok(missedObjectives(early) > 0, '못 끝낸 목표는 점수에 그대로 남는다');
+
+  // 구석에 숨어 버린 직원 한 명도 마찬가지다 (2단계).
+  const hidden = room({
+    phase: phaseIndex('sweep'),
+    phaseEnteredAt: Date.now() - STALL_MS - 1000,
+    npcs: [civilian({ id: 'c1', x: 0, z: 0 })],
+  });
+  assert.equal(objectiveState(hidden, 'civilians').done, true);
+  // 시한과 무관하게, 셀 대상이 없으면 여전히 끝난 것이 아니다.
+  hidden.npcs.length = 0;
+  assert.equal(objectiveState(hidden, 'civilians').done, false);
 });
 
 /* ========================================================================== *

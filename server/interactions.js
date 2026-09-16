@@ -14,7 +14,7 @@ import {
   EVIDENCE_SECONDS, SHOUT_COOLDOWN,
 } from './constants.js';
 import { now, dist2D, at3, emitNoise } from './util.js';
-import { pullAlarm, ALARM_SECONDS } from './events.js';
+import { pullAlarm, tripSprinklerAt, ALARM_SECONDS } from './events.js';
 import { makeWorld } from './world.js';
 
 export function interactionTarget(room, player) {
@@ -109,6 +109,10 @@ export function completeInteraction(room, player, target, io) {
     io.to(room.code).emit('evidenceTaken', {
       id: item.id, by: player.id, label: item.label, x: item.x, z: item.z,
     });
+    /* 자료를 뽑으면 그 구역의 소화 설비가 돈다. 경보기 손잡이를 찾지 못한
+     * 판에서도 물이 무엇을 하는지는 보게 된다 - 그리고 회수한 자리를 빠져
+     * 나오는 몇 초가 실제로 유리해진다. */
+    tripSprinklerAt(room, item.x, item.z, io, `${item.label} 회수`);
   } else if (target.kind === 'alarm') {
     if (!pullAlarm(room, target.id, player.id, io)) return;
     // 당기는 소리 자체는 숨길 수 없다. 바로 옆에 있는 자에게는 그냥 들킨다.

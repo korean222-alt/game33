@@ -44,6 +44,23 @@ function disposeTree(root) {
  * 충돌 판정은 map-data 의 원본 높이를 쓰므로 게임플레이는 그대로다. */
 const CEILING_OVERLAP = 0.08;
 
+/* 문틀 치수. 천장과 같은 이유로 여기도 "겹치는 면" 을 만들지 않는 것이 전부다
+ * (_buildDoors 의 주석에 어느 면이 문제였는지 적어 두었다).
+ *
+ *   FRAME_W     세로 기둥의 폭
+ *   DOOR_REVEAL 기둥이 문 구멍 쪽으로 들이민 깊이. 이만큼이 벽 앞으로 나와서
+ *               기둥 안쪽 면과 벽 끝 면이 다른 평면에 놓인다.
+ *   FRAME_BURY  기둥이 문 위 벽 속으로 파묻히는 높이. 윗면을 감춘다.
+ *   HEAD_H      가로 상인방의 높이. 문짝 윗변(doorHeight - 4cm)에서 시작해
+ *               벽 아랫면(doorHeight)을 지나 벽 속에서 끝나야 하므로 4cm 보다
+ *               확실히 커야 한다.
+ *   POST_PROUD  문틀이 벽면 밖으로 나온 두께 (한쪽). */
+const FRAME_W = 0.09;
+const DOOR_REVEAL = 0.035;
+const FRAME_BURY = 0.06;
+const HEAD_H = 0.13;
+const POST_PROUD = 0.04;
+
 /* 스프링클러 물줄기. 구역 전체(92 x 16.5m)에 뿌리면 입자가 수만 개 필요하고
  * 정작 눈앞은 성기다. 카메라 둘레 7m 안에만 뿌린다 - 걸어 들어가면 그때부터
  * 앞이 뿌옇고, 구역 밖으로 나가면 뚝 그친다. */
@@ -285,19 +302,43 @@ export class World {
         return pivot;
       });
 
-      // 문틀
+      /* ---- 문틀 -----------------------------------------------------------
+       *  여기가 "문이랑 벽이 겹쳐서 깨져 보인다" 의 자리였다. 문틀이 벽과
+       *  정확히 같은 평면에서 끝나고 있었다.
+       *
+       *    - 세로 기둥의 안쪽 면이 벽이 끝나는 면(±span/2)과 한 평면이었다.
+       *    - 가로 상인방의 아랫면이 문 위 벽의 아랫면(y = doorHeight)과
+       *      한 평면이었다.
+       *
+       *  같은 방향을 보는 두 면이 같은 평면에 있으면 깊이 버퍼가 어느 쪽이
+       *  앞인지 정하지 못한다 (z-fighting). 화면에서는 문 둘레가 지글거리거나
+       *  벽이 뚫린 것처럼 얼룩진다 - 카메라가 움직일 때마다 무늬가 바뀐다.
+       *
+       *  고치는 방법은 하나다: 두 면을 같은 평면에 두지 않는다. 문틀을 문
+       *  구멍 쪽으로 REVEAL 만큼 들이밀어 안쪽 면을 벽 앞으로 꺼내고, 상인방은
+       *  벽의 아랫면을 가로질러 걸치게 해서 어느 면도 겹치지 않게 한다.
+       * -------------------------------------------------------------------- */
       const frame = new THREE.Group();
       for (const side of [-1, 1]) {
         const post = new THREE.Mesh(
-          new THREE.BoxGeometry(0.09, MAP.doorHeight, door.thickness + 0.08), frameMat,
+          // 위로 조금 더 길게. 윗면을 벽 속에 묻어 두면 그 면도 보이지 않는다.
+          new THREE.BoxGeometry(FRAME_W, MAP.doorHeight + FRAME_BURY, door.thickness + POST_PROUD * 2), frameMat,
         );
-        post.position.set(side * (door.span / 2 + 0.045), MAP.doorHeight / 2, 0);
+        post.position.set(
+          side * (door.span / 2 - DOOR_REVEAL + FRAME_W / 2),
+          (MAP.doorHeight + FRAME_BURY) / 2, 0,
+        );
         frame.add(post);
       }
+      /* 상인방은 문짝 윗변(doorHeight - 0.04)에서 시작해 벽 아랫면(doorHeight)을
+       * 지나 벽 속에서 끝난다. 아랫면은 벽보다 아래, 윗면은 벽 속이다. */
+      const headBottom = MAP.doorHeight - 0.04;
       const head = new THREE.Mesh(
-        new THREE.BoxGeometry(door.span + 0.18, 0.09, door.thickness + 0.08), frameMat,
+        // 기둥보다 1cm 더 두껍게. 같은 두께로 두면 서로 겹치는 자리에서
+        // 앞뒤 면이 또 한 평면이 되어 같은 지글거림이 돌아온다.
+        new THREE.BoxGeometry(door.span + 0.18, HEAD_H, door.thickness + POST_PROUD * 2 + 0.02), frameMat,
       );
-      head.position.y = MAP.doorHeight + 0.045;
+      head.position.y = headBottom + HEAD_H / 2;
       frame.add(head);
 
       const group = new THREE.Group();

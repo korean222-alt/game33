@@ -12,7 +12,7 @@
  *  서버에 위임한다. 덕분에 테스트에서 가짜 world 로 행동을 검증할 수 있다.
  * ========================================================================== */
 
-import { resolveCircle, groundHeight, zoneAt, COVER_POINTS } from './map-data.js';
+import { resolveCircle, groundHeight, zoneAt, AREAS, COVER_POINTS } from './map-data.js';
 import {
   NOISE, HEAR_FLOOR, HEAR_INVESTIGATE, heardLevel, inFieldOfView,
   hasClearShot, visibilityFactor, hitChance,
@@ -426,9 +426,12 @@ function guard(npc, w) {
   // 가끔 두리번거린다. 순찰 성향이면 방 안의 다른 자리로 옮긴다.
   if (w.now < npc.stateUntil) { faceToward(npc, npc.x + Math.sin(npc.yaw + 1), npc.z, w.dt); return; }
   npc.stateUntil = w.now + 2600 + w.random() * 4200;
-  if (!npc.anchored && w.random() < npc.traits.patrol) {
+  /* 순찰 확률은 성향이 정하지만, 세상이 배율을 건다 (w.patrolScale). 잔여
+   * 인원 단계에서는 더 자주 움직인다 - 남은 몇 명이 각자 방 구석에 박혀
+   * 있으면 방 열여덟 칸을 처음부터 다시 다 열어 봐야 한다. */
+  if (!npc.anchored && w.random() < npc.traits.patrol * (w.patrolScale ?? 1)) {
     const spot = w.roamPoint(npc.room, npc);
-    if (spot) { setState(npc, 'patrol', w, 14000); npc.roam = spot; return; }
+    if (spot) { setState(npc, 'patrol', w, 18000); npc.roam = spot; return; }
   }
   // 담당 방향에서 크게 벗어나지 않게 둘러본다. 배치 시점에 등을 돌리고 있던
   // 경비가 곧바로 시작 지점을 보게 되면 "정보 없이 즉사" 가 된다.
@@ -438,7 +441,16 @@ function guard(npc, w) {
 function patrol(npc, w) {
   npc.crouch = 0;
   if (!npc.roam || w.now > npc.stateUntil) { setState(npc, 'guard', w); return; }
-  if (stepToward(npc, npc.roam, SPEED.walk, w)) setState(npc, 'guard', w, 2400);
+  if (!stepToward(npc, npc.roam, SPEED.walk, w)) return;
+  /* 도착한 자리를 새 담당 자리로 삼는다.
+   *
+   *  그러지 않으면 guard() 가 곧바로 원래 자리로 되돌려 보낸다 - 결과가 "제자리
+   *  왕복" 이라, 처음 배치된 방을 영원히 벗어나지 못했다. 자리를 갈아 끼워야
+   *  비로소 건물 안을 돌아다닌다. */
+  npc.post = { x: npc.roam.x, y: npc.y, z: npc.roam.z, yaw: npc.roam.yaw ?? npc.yaw };
+  npc.room = zoneAt(npc.x, npc.z);
+  npc.roam = null;
+  setState(npc, 'guard', w, 2400);
 }
 
 /* ---- 작은 소리: 멈춰서 그쪽을 본다 --------------------------------------- */
@@ -624,11 +636,27 @@ export function updateCivilian(npc, w) {
 /* ========================================================================== *
  *  배치 계획
  * ========================================================================== */
+/* 지금 켜진 맵의 야외 구역 이름.
+ *
+ *  예전에는 저택의 마당 이름 넷을 상수로 박아 두었다. 사무실에서는 그 넷이
+ *  하나도 안 맞아서 광장·주차장·하역장이 전부 "실내" 로 분류됐고, 바깥 경비를
+ *  먼저 세우는 규칙도, 한 방에 두 명까지라는 규칙도 마당에는 걸리지 않았다.
+ *  배열 자체를 열쇠로 캐시하므로 맵을 오가도 다시 세지 않는다. */
+const outdoorCache = new WeakMap();
+function outdoorNames() {
+  let names = outdoorCache.get(AREAS);
+  if (!names) {
+    names = AREAS.filter((a) => a.outdoor).map((a) => a.name);
+    outdoorCache.set(AREAS, names);
+  }
+  return names;
+}
+
 /**
  * 방마다 적이 있을 수도, 없을 수도 있게 배치한다.
  * "빈 방"이 실제로 존재해야 문을 열 때의 긴장이 생긴다.
  */
-export function planOccupancy(posts, count, random = Math.random) {
+export function planOccupancy(posts, count, random = Math.random, outdoor = outdoorNames()) {
   const byRoom = new Map();
   for (const post of posts) {
     if (!byRoom.has(post.room)) byRoom.set(post.room, []);
@@ -637,7 +665,6 @@ export function planOccupancy(posts, count, random = Math.random) {
   const rooms = [...byRoom.keys()].sort(() => random() - 0.5);
   const chosen = [];
   // 1) 바깥 경비를 먼저 한두 명 세운다 (플레이어가 밖에서 시작하므로).
-  const outdoor = ['COURTYARD', 'WEST YARD', 'EAST YARD', 'GARDEN'];
   const outdoorPosts = posts.filter((p) => outdoor.includes(p.room));
   const guards = Math.min(outdoorPosts.length, Math.max(1, Math.round(count * 0.3)));
   const shuffledOutdoor = [...outdoorPosts].sort(() => random() - 0.5);
@@ -656,7 +683,11 @@ export function planOccupancy(posts, count, random = Math.random) {
   const personalities = Object.keys(PERSONALITIES).filter((p) => p !== 'leader');
   return chosen.map((post, i) => ({
     post,
-    personality: post.room === 'COURTYARD' && i === 0
+    /* 맨 처음 마주치는 마당 경비 한 명은 방어형으로 고정한다. 첫 교전이 매번
+     * 돌격형이면 배울 틈 없이 죽는다. (맵마다 마당 이름이 다르므로 이름을
+     * 박아 두지 않는다 - 저택의 'COURTYARD' 를 적어 두었더니 사무실에서는
+     * 이 완화가 아예 걸리지 않았다.) */
+    personality: outdoor.includes(post.room) && i === 0
       ? 'defensive'
       : personalities[Math.floor(random() * personalities.length)],
   }));

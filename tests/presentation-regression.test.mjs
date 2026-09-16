@@ -7,6 +7,7 @@ import { AssetManager } from '../public/js/assets.js';
 import { ViewmodelHands } from '../public/js/viewmodel-hands.js';
 import { WristRestraints, placeWrist } from '../public/js/restraints.js';
 import { World } from '../public/js/world.js';
+import { DOORWAYS, MAP, setActiveMap } from '../public/js/map-data.js';
 
 for (const key of ['rifle','smg','sniper']) test(`${key}: detached magazine moves independently and resets without changing shared assets`, async () => {
   const assets = new AssetManager(), loader = new GLTFLoader();
@@ -46,16 +47,56 @@ test('wrist constraints follow animated hands after avatar rotation, translation
   cuffs.update(false);assert.equal(cuffs.group.visible,false);cuffs.dispose();
 });
 
-test('door frame uprights and header meet without overlapping front faces', () => {
+/* 문틀이 벽과 "같은 평면에서" 끝나지 않는지 본다.
+ *
+ *  같은 방향을 보는 두 면이 정확히 같은 평면에 있으면 깊이 버퍼가 앞뒤를
+ *  정하지 못하고, 화면에서는 문 둘레가 지글거리거나 벽이 얼룩져 보인다
+ *  (z-fighting). 눈으로만 잡을 수 있는 종류의 버그라 여기서 치수로 막는다.
+ *
+ *  검사하는 평면은 셋이다.
+ *    1) 기둥 안쪽 면  vs  벽이 끝나는 면 (±span/2)
+ *    2) 상인방 아랫면  vs  문 위 벽의 아랫면 (y = doorHeight)
+ *    3) 기둥 앞뒤 면  vs  상인방 앞뒤 면 (둘이 겹치는 자리)
+ */
+for(const mapId of ['mansion','office']) test(`${mapId}: door frames never share a plane with the wall they sit in`, () => {
+  setActiveMap(mapId);
   const world=new World(null,null);world._buildDoors();
-  for(const {group,leaves} of world.doorMeshes.values()) {
+  const EPS=.004;
+  for(const door of DOORWAYS) {
+    const {group,leaves}=world.doorMeshes.get(door.id);
     const [left,right,head]=group.children[0].children;
-    assert.equal(left.position.y+left.geometry.parameters.height/2, head.position.y-head.geometry.parameters.height/2);
-    assert.equal(right.position.y+right.geometry.parameters.height/2, head.position.y-head.geometry.parameters.height/2);
-    // 문짝을 다 합쳐도 문틀 안쪽에 들어가야 한다 (두 짝짜리 문 포함).
+    const headBottom=head.position.y-head.geometry.parameters.height/2;
+    const headTop=head.position.y+head.geometry.parameters.height/2;
+
+    // 1) 기둥 안쪽 면은 문 구멍 안으로 나와 있어야 한다.
+    for(const post of [left,right]) {
+      const inner=Math.abs(post.position.x)-post.geometry.parameters.width/2;
+      assert.ok(inner < door.span/2-EPS,
+        `${door.id}: 기둥 안쪽 면 ${inner} 이 벽 끝 ${door.span/2} 과 같은 평면이다`);
+      // 기둥 윗면은 상인방 속에 묻혀 있어야 한다 (틈도, 겹치는 평면도 없게).
+      const top=post.position.y+post.geometry.parameters.height/2;
+      assert.ok(top > headBottom+EPS && top < headTop-EPS,
+        `${door.id}: 기둥 윗면 ${top} 이 상인방(${headBottom}~${headTop}) 안에 있지 않다`);
+    }
+
+    // 2) 상인방은 벽 아랫면을 가로질러 걸친다 - 아래는 벽 밖, 위는 벽 속.
+    assert.ok(headBottom < MAP.doorHeight-EPS && headTop > MAP.doorHeight+EPS,
+      `${door.id}: 상인방(${headBottom}~${headTop})이 벽 아랫면 ${MAP.doorHeight} 을 가로지르지 않는다`);
+
+    // 3) 겹치는 기둥과 상인방은 두께가 달라야 한다.
+    assert.notEqual(left.geometry.parameters.depth, head.geometry.parameters.depth,
+      `${door.id}: 기둥과 상인방의 앞뒤 면이 같은 평면이다`);
+
+    // 문짝은 상인방 아래에서 끝나고, 다 합쳐도 문틀 안쪽에 들어간다.
+    for(const pivot of leaves) {
+      const leaf=pivot.children[0];
+      assert.ok(leaf.position.y+leaf.geometry.parameters.height/2 <= headBottom+EPS,
+        `${door.id}: 문짝 윗변이 상인방을 뚫는다`);
+      assert.equal(pivot.rotation.y,0,'문은 닫힌 채로 지어진다');
+    }
     const total=leaves.reduce((sum,pivot)=>sum+pivot.children[0].geometry.parameters.width,0);
     assert.ok(total < head.geometry.parameters.width-.18,
       `문짝 합계 ${total} 가 문틀 ${head.geometry.parameters.width} 보다 넓다`);
-    for(const pivot of leaves) assert.equal(pivot.rotation.y,0,'문은 닫힌 채로 지어진다');
   }
+  setActiveMap('mansion');   // 다른 검사에 켜 둔 맵을 넘기지 않는다
 });

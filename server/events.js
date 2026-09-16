@@ -145,6 +145,37 @@ export function pullAlarm(room, alarmId, byId, io) {
 }
 
 /**
+ * 그 자리를 덮는 방화구역을 스스로 돌린다.
+ *
+ *  경보기 손잡이를 당겨야만 물이 나오게 해 두었더니, 벽에 붙은 작은 손잡이를
+ *  아무도 못 찾아서 사옥의 절반짜리 장치가 한 판도 안 쓰였다. "어떻게 쓰는지
+ *  모르겠다" 는 말이 그 증상이다.
+ *
+ *  그래서 회수와 해체에도 물렸다. 증거를 뽑거나 소각 장치를 끄면 그 구역이
+ *  젖는다 - 한 판에 최소 몇 번은 물이 도는 것을 보게 되고, 그러고 나면
+ *  경보기 손잡이가 무엇인지도 알게 된다.
+ *
+ *  공짜는 아니다. 물이 도는 동안은 내 눈도 나빠지고, 직원들은 흩어진다.
+ *  이미 돌고 있거나 예약된 구역은 다시 켜지 않는다.
+ *
+ *  @returns 실제로 예약했으면 구역, 아니면 null
+ */
+export function tripSprinklerAt(room, x, z, io, reason = '') {
+  const t = now();
+  const zone = sprinklersOf(room).find((s) => {
+    const a = s.area;
+    return Math.abs(x - a.x) <= a.w / 2 && Math.abs(z - a.z) <= a.d / 2;
+  });
+  if (!zone) return null;
+  if ((room.sprinklerUntil.get(zone.id) || 0) > t || room.sprinklerAt.has(zone.id)) return null;
+  room.sprinklerAt.set(zone.id, t + SPRINKLER_DELAY_MS);
+  io.to(room.code).emit('radio', {
+    text: `무전: ${reason ? `${reason} — ` : ''}${zone.label} 소화 설비가 작동했다. 잠시 뒤 시야가 나빠진다.`,
+  });
+  return zone;
+}
+
+/**
  * 스프링클러를 한 틱 굴린다.
  *
  *  물이 도는 동안 NPC 쪽에서 달라지는 것은 두 가지뿐이고(밝기·소리), 둘 다
